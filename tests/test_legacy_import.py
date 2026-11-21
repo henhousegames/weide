@@ -137,6 +137,36 @@ def test_idempotent(imported, legacy, snapshot):
     assert dump() == before
 
 
+def test_rerun_never_touches_posts_from_elsewhere(imported, legacy, snapshot):
+    con, _ = imported
+    henne = con.execute("SELECT id FROM accounts WHERE slug='henne'").fetchone()[0]
+    gen = db.upsert_post(con, account_id=henne, kind="text", caption="Neu", posted_at="2026-11-18T10:00:00+01:00",
+                         source="generation:run-7", status="published", public_id="g7a7a7")
+    cli = db.upsert_post(con, account_id=henne, kind="text", caption="Später", posted_at="2026-11-18T11:00:00+01:00",
+                         source="cli:later", status="published")
+    con.execute("UPDATE posts SET status='published' WHERE id=5")        # legacy draft published by hand
+    con.commit()
+    import_legacy_db(con, legacy, snapshot)
+    status = {r["id"]: r["status"] for r in con.execute("SELECT id, status FROM posts")}
+    assert status[gen] == "published" and status[cli] == "published"
+    assert status[5] == "draft"                                           # legacy source, not public -> demoted
+
+
+def test_collision_with_a_post_of_another_origin_is_an_error(legacy, snapshot, db_path):
+    con = db.connect(db_path)
+    db.upsert_account(con, "henne", kind="animal", handle="@henne", display_name="Henne")
+    aid = con.execute("SELECT id FROM accounts WHERE slug='henne'").fetchone()[0]
+    db.upsert_post(con, id=5, account_id=aid, kind="text", caption="Generiert", posted_at="2026-11-18T10:00:00+01:00",
+                   source="generation:run-8", status="published", public_id="g8b8b8")
+    con.commit()
+    with pytest.raises(ValueError, match="another origin"):
+        import_legacy_db(con, legacy, snapshot)
+    row = con.execute("SELECT status, source, caption FROM posts WHERE id=5").fetchone()
+    assert tuple(row) == ("published", "generation:run-8", "Generiert")
+    assert counts(con)["posts"] == 1
+    con.close()
+
+
 def test_source_mismatch_is_an_error(legacy, tmp_path, db_path):
     snap = make_snapshot(tmp_path / "other", {1: "sample:other:1"})
     con = db.connect(db_path)

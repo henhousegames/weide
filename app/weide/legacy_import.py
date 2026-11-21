@@ -93,7 +93,12 @@ def _import_posts(src: sqlite3.Connection, con: sqlite3.Connection, accounts: di
         pid = r["id"]
         if pid in published and published[pid] != r["source"]:
             raise ValueError(f"post {pid}: source {r['source']!r} differs from the public snapshot ({published[pid]!r})")
-        existing = con.execute("SELECT status FROM posts WHERE id=?", (pid,)).fetchone()
+        # Only a row that came from this legacy post (same id AND same source) may be updated or demoted;
+        # posts from elsewhere (generation runs, later approvals) are never touched.
+        existing = con.execute("SELECT status, source FROM posts WHERE id=? OR source=?", (pid, r["source"])).fetchall()
+        if any(e["source"] != r["source"] for e in existing) or len(existing) > 1:
+            raise ValueError(f"legacy post {pid} ({r['source']!r}) collides with a post of another origin")
+        existing = existing[0] if existing else None
         if pid in published:
             status = "published"
         elif existing and existing["status"] == "approved":
