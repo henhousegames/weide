@@ -1,6 +1,6 @@
 """Command line: `uv run weide <command>`.
 
-Commands: migrate, import-public, seed-characters, serve, export-static.
+Commands: migrate, import-public, import-legacy-db, seed-characters, serve, export-static.
 """
 from __future__ import annotations
 
@@ -49,6 +49,26 @@ def cmd_import_public(a: argparse.Namespace) -> None:
     print(json.dumps(stats, ensure_ascii=False))
 
 
+def cmd_import_legacy_db(a: argparse.Namespace) -> None:
+    from .db import connect
+    from .legacy_import import import_legacy_db
+    target = Path(a.db or config.DEFAULT_DB).expanduser().resolve()
+    if target == Path(a.path).expanduser().resolve():
+        _die("the legacy database is only ever read; choose a different --db as the target")
+    con = connect(target)
+    try:
+        stats = import_legacy_db(con, a.path, a.public)
+    except (ValueError, LookupError, FileNotFoundError, KeyError) as e:
+        _die(str(e))
+    finally:
+        con.close()
+    print(json.dumps(stats, ensure_ascii=False))
+    snap = stats["snapshot"]
+    if snap["accounts_not_public"]:
+        print("warning: accounts not in the public snapshot become visible: " + ", ".join(snap["accounts_not_public"]),
+              file=sys.stderr)
+
+
 def cmd_seed_characters(a: argparse.Namespace) -> None:
     from .characters import seed_characters
     from .db import connect
@@ -91,6 +111,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dir", help="export root (containing data/) or the data/ dir itself")
     _db_arg(s)
     s.set_defaults(fn=cmd_import_public)
+
+    s = sub.add_parser("import-legacy-db", help="merge a legacy (v1) SQLite database into the database (read-only "
+                       "source; posts not in the public snapshot become drafts); idempotent")
+    s.add_argument("path", help="legacy SQLite file (opened read-only, never modified)")
+    s.add_argument("--public", default=None, help="public export (root or data/) deciding what is published "
+                   "(default: this repository's data/)")
+    _db_arg(s)
+    s.set_defaults(fn=cmd_import_legacy_db)
 
     s = sub.add_parser("seed-characters", help="create/update the public seed characters (app/weide/seed); idempotent")
     _db_arg(s)
