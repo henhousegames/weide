@@ -2,6 +2,8 @@
 
 The JSON contract is the one static/js/api.js expects (and export-static writes). Only posts with
 status 'published' are visible anywhere: feed, post detail, moments, profiles, rankings, counts.
+Accounts are public when listed (legacy public snapshot) or once they have a published post (`visible`);
+the preview passes all_accounts=True and sees every account.
 """
 from __future__ import annotations
 
@@ -22,6 +24,14 @@ from .media import MediaError, avatar_file, media_exists, media_file, media_kind
 from .ranking import combine, engagement, engagement_score, iso_week, today, top, window
 
 PUBLISHED = "p.status = 'published'"
+
+
+def visible(alias: str = "a") -> str:
+    """SQL condition: the account is public. Listed accounts (the legacy public snapshot, marked by the
+    importers) always are; every other account (e.g. a freshly seeded character) only once it has a
+    published post. The preview (all_accounts=True) shows every account."""
+    return (f"({alias}.listed = 1 OR EXISTS (SELECT 1 FROM posts vp WHERE vp.account_id = {alias}.id "
+            "AND vp.status = 'published'))")
 
 
 def media_url(rel: str | None) -> str | None:
@@ -153,9 +163,10 @@ class ReactBody(BaseModel):
     type: str
 
 
-def create_app(db_path: str | Path | None = None, *, readonly: bool = False,
+def create_app(db_path: str | Path | None = None, *, readonly: bool = False, all_accounts: bool = False,
                setup: Callable[[FastAPI, Callable[[], Any]], None] | None = None) -> FastAPI:
     """readonly: open the database with SQLite `mode=ro` (no migration, no writes; reactions answer 403).
+    all_accounts: list and show every account (preview); otherwise only public ones (see `visible`).
     setup(app, db): called before the standard routes are added, so its routes take precedence (preview.py)."""
     db_file = Path(db_path or config.DEFAULT_DB)
     if readonly:
@@ -263,10 +274,13 @@ def create_app(db_path: str | Path | None = None, *, readonly: bool = False,
             q = ("SELECT a.*, (SELECT COUNT(*) FROM posts p WHERE p.account_id=a.id AND p.parent_id IS NULL "
                  f"AND {PUBLISHED}) posts FROM accounts a")
             args: list[Any] = []
+            where = [] if all_accounts else [visible("a")]
             kinds = _csv(kind)
             if kinds:
-                q += f" WHERE a.kind IN ({','.join('?' * len(kinds))})"
+                where.append(f"a.kind IN ({','.join('?' * len(kinds))})")
                 args += kinds
+            if where:
+                q += " WHERE " + " AND ".join(where)
             q += (" ORDER BY CASE a.kind WHEN 'animal' THEN 0 WHEN 'human' THEN 1 WHEN 'robot' THEN 2 "
                   "WHEN 'other' THEN 3 WHEN 'house' THEN 4 ELSE 5 END, a.followers DESC, a.id")
             rows = con.execute(q, args).fetchall()
@@ -276,7 +290,8 @@ def create_app(db_path: str | Path | None = None, *, readonly: bool = False,
     @app.get("/api/accounts/{slug}")
     def account(slug: str) -> dict:
         with db() as con:
-            r = con.execute("SELECT * FROM accounts WHERE slug = ? OR handle = ? OR handle = ?",
+            r = con.execute("SELECT * FROM accounts a WHERE (slug = ? OR handle = ? OR handle = ?)"
+                            + ("" if all_accounts else f" AND {visible('a')}"),
                             (slug.lstrip("@"), slug, "@" + slug.lstrip("@"))).fetchone()
             if not r:
                 raise HTTPException(404, f"no account {slug!r}")
@@ -285,7 +300,9 @@ def create_app(db_path: str | Path | None = None, *, readonly: bool = False,
             inworld = prof.get("inworld") or {}
             people = []
             for e in inworld.get("leute") or []:
-                o = con.execute("SELECT * FROM accounts WHERE slug = ?", (e["slug"],)).fetchone()
+                o = con.execute("SELECT * FROM accounts a WHERE slug = ?"
+                                + ("" if all_accounts else f" AND {visible('a')}"), (e["slug"],)).fetchone()
+                # a hidden account is rendered like an unknown one: brief null (views.js shows it unlinked)
                 people.append({"slug": e["slug"], "text": e["text"], "account": account_brief(o) if o else None})
             following = con.execute("SELECT COUNT(*) FROM follows WHERE follower_id=?", (r["id"],)).fetchone()[0]
             if not following:

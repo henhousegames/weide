@@ -487,7 +487,7 @@ def create_preview_app(db_path: str | Path | None = None, *, token: str | None =
             return StreamingResponse(_body(upstream), status_code=upstream.status_code, headers=headers,
                                      background=BackgroundTask(upstream.aclose))
 
-    return create_app(db_path, readonly=True, setup=setup)
+    return create_app(db_path, readonly=True, all_accounts=True, setup=setup)
 
 
 async def _body(upstream: httpx.Response) -> AsyncIterator[bytes]:

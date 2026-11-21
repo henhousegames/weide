@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from weide import db
-from weide.characters import seed_characters
+from weide.characters import load_seeds, seed_characters
 from weide.cli import main
 from weide.export_static import export_static
 from weide.importer import import_public
@@ -225,9 +225,9 @@ def test_after_import_public_and_with_seed_characters(legacy, snapshot, tmp_path
     import_legacy_db(fresh, legacy, snapshot)
     assert not fresh.execute("SELECT 1 FROM reactions WHERE source='import'").fetchone()
     assert db.reaction_totals(fresh, [1, 2, 5]) == db.reaction_totals(con, [1, 2, 5])
-    assert counts(fresh)["follows"] == 3 and counts(fresh)["accounts"] == 4
+    assert counts(fresh)["follows"] == 3 and counts(fresh)["accounts"] == 3 + len(load_seeds())
     seed_characters(fresh)
-    assert fresh.execute("SELECT COUNT(*) FROM characters").fetchone()[0] == 1
+    assert fresh.execute("SELECT COUNT(*) FROM characters").fetchone()[0] == len(load_seeds())
     fresh.close()
 
 
@@ -237,3 +237,21 @@ def test_cli(legacy, snapshot, db_path, capsys):
     assert out["posts"] == 3 and out["follows"] == 3 and out["snapshot"]["draft_posts"] == [5]
     with pytest.raises(SystemExit):
         main(["import-legacy-db", str(legacy), "--public", str(snapshot), "--db", str(legacy)])
+
+
+def test_only_snapshot_accounts_are_listed(legacy, tmp_path, db_path):
+    """A legacy account missing from the public snapshot stays hidden until it has a published post."""
+    snap = make_snapshot(tmp_path / "public")
+    (snap / "data/accounts.json").write_text(json.dumps({"items": [{"slug": "henne"}, {"slug": "uwe"}]}))
+    con = db.connect(db_path)
+    stats = import_legacy_db(con, legacy, snap)
+    assert stats["snapshot"]["accounts_not_public"] == ["fan.1"]
+    assert dict(con.execute("SELECT slug, listed FROM accounts").fetchall()) == {"henne": 1, "uwe": 1, "fan.1": 0}
+    con.close()
+    c = TestClient(create_app(db_path))
+    assert [a["slug"] for a in c.get("/api/accounts").json()["items"]] == ["henne", "uwe"]
+    assert c.get("/api/accounts/uwe").status_code == 200            # listed, no published post
+    assert c.get("/api/accounts/fan.1").status_code == 404
+    # comments by a hidden account on a public post are still shown (with its brief)
+    p2 = c.get("/api/posts/2").json()
+    assert "fan.1" in json.dumps(p2["comments"])

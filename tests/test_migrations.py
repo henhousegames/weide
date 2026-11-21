@@ -54,12 +54,13 @@ def test_migration_from_legacy_schema(db_path):
     legacy_db(db_path)
     con = sqlite3.connect(db_path, isolation_level=None)
     assert db.schema_version(con) == 1
-    assert db.migrate(con) == [2, 3, 4]
+    assert db.migrate(con) == [2, 3, 4, 5]
     con.close()
     con = db.connect(db_path)
     assert db.schema_version(con) == db.SCHEMA_VERSION
     a = con.execute("SELECT * FROM accounts WHERE slug='lisa'").fetchone()
     assert a["id"] == 5 and a["kind"] == "animal" and a["world"] is None
+    assert [r[0] for r in con.execute("SELECT listed FROM accounts ORDER BY id")] == [1, 1]   # stay public
     p = con.execute("SELECT * FROM posts WHERE id=3").fetchone()
     assert p["status"] == "published" and p["public_id"] is None and p["generation_json"] is None
     assert p["source"] == "episode:x:1"
@@ -114,4 +115,25 @@ def test_newer_schema_is_refused(db_path):
 def test_cli_migrate(db_path, capsys):
     legacy_db(db_path)
     main(["migrate", "--db", str(db_path)])
-    assert '"applied": [2, 3, 4]' in capsys.readouterr().out
+    assert '"applied": [2, 3, 4, 5]' in capsys.readouterr().out
+
+
+def test_m005_lists_accounts_with_posts_or_without_character(db_path):
+    """Migration 5 on a version-4 database: imported accounts (no characters row) and characters with a
+    published post stay public; a seeded character without a published post becomes unlisted."""
+    con = sqlite3.connect(db_path, isolation_level=None)
+    con.execute("BEGIN")
+    for v, _n, fn in db.MIGRATIONS[:4]:
+        fn(con)
+    con.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')")
+    con.execute("COMMIT")
+    for i, (slug, kind) in enumerate([("hannes", "human"), ("maehbot", "robot"), ("gustav", "robot")], 1):
+        con.execute("INSERT INTO accounts (id, slug, kind, handle, display_name) VALUES (?,?,?,?,?)",
+                    (i, slug, kind, "@" + slug, slug))
+    con.execute("INSERT INTO characters (account_id, kind) VALUES (2, 'robot'), (3, 'robot')")
+    con.execute("INSERT INTO posts (account_id, kind, posted_at, ts, status) VALUES "
+                "(3, 'reel', '2026-11-17T10:00:00+01:00', 1, 'published'), "
+                "(2, 'reel', '2026-11-17T10:00:00+01:00', 1, 'draft')")
+    assert db.migrate(con) == [5]
+    assert dict(con.execute("SELECT slug, listed FROM accounts").fetchall()) == {"hannes": 1, "maehbot": 0, "gustav": 1}
+    con.close()
