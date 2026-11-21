@@ -1,7 +1,7 @@
 """Command line: `uv run weide <command>`.
 
-Commands: migrate, import-public, import-legacy-db, seed-characters, serve, export-static, pull-approved,
-deploy.
+Commands: migrate, import-public, import-legacy-db, seed-characters, serve (--preview), preview-key,
+export-static, pull-approved, deploy.
 """
 from __future__ import annotations
 
@@ -84,10 +84,33 @@ def cmd_seed_characters(a: argparse.Namespace) -> None:
 
 
 def cmd_serve(a: argparse.Namespace) -> None:
+    if a.preview:
+        return cmd_serve_preview(a)
     import uvicorn
 
     from .server import create_app
-    uvicorn.run(create_app(a.db), host=a.host, port=a.port, log_level="info")
+    uvicorn.run(create_app(a.db), host=a.host or "127.0.0.1", port=a.port or config.DEFAULT_PORT, log_level="info")
+
+
+def cmd_serve_preview(a: argparse.Namespace) -> None:
+    from .preview import DEFAULT_PORT, PreviewConfigError, parse_hosts, serve
+    from .preview_auth import PreviewKeyError
+    try:
+        hosts = parse_hosts(a.host or config.env("PREVIEW_HOSTS") or "127.0.0.1")
+        port = a.port or int(config.env("PREVIEW_PORT") or DEFAULT_PORT)
+        serve(a.db, hosts, port)
+    except (PreviewConfigError, PreviewKeyError, FileNotFoundError, ValueError, OSError) as e:
+        _die(str(e))
+
+
+def cmd_preview_key(a: argparse.Namespace) -> None:
+    from .preview_auth import PreviewKeyError, create_key
+    try:
+        path = create_key(Path(a.path) if a.path else None, rotate=a.rotate)
+    except PreviewKeyError as e:
+        _die(str(e))
+    # the token itself is never printed
+    print(json.dumps({"key_file": str(path), "rotated": bool(a.rotate)}))
 
 
 def cmd_export_static(a: argparse.Namespace) -> None:
@@ -156,10 +179,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_seed_characters)
 
     s = sub.add_parser("serve", help=f"run the web app (default port {config.DEFAULT_PORT})")
-    s.add_argument("--host", default="127.0.0.1")
-    s.add_argument("--port", type=int, default=config.DEFAULT_PORT)
+    s.add_argument("--host", default=None, help="address (default 127.0.0.1); with --preview a comma separated list "
+                   "(default: $HENHOUSE_PREVIEW_HOSTS), never 0.0.0.0")
+    s.add_argument("--port", type=int, default=None, help=f"default {config.DEFAULT_PORT}; with --preview "
+                   "$HENHOUSE_PREVIEW_PORT or 18510")
+    s.add_argument("--preview", action="store_true", help="private read-only preview with drafts from the "
+                   "generation service; login required (see docs/PREVIEW.md)")
     _db_arg(s)
     s.set_defaults(fn=cmd_serve)
+
+    s = sub.add_parser("preview-key", help="create the preview login key file (never printed)")
+    s.add_argument("--rotate", action="store_true", help="replace an existing key (logs out every browser)")
+    s.add_argument("--path", default=None, help="key file (default: $HENHOUSE_PREVIEW_KEY_FILE or "
+                   "~/.config/henhouse/preview.key)")
+    s.set_defaults(fn=cmd_preview_key)
 
     s = sub.add_parser("export-static", help="write a static snapshot (published posts only) for a plain file host")
     s.add_argument("outdir")
