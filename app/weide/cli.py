@@ -1,6 +1,6 @@
 """Command line: `uv run weide <command>`.
 
-Commands: migrate, import-public, serve, export-static.
+Commands: migrate, import-public, seed-characters, serve, export-static.
 """
 from __future__ import annotations
 
@@ -49,6 +49,19 @@ def cmd_import_public(a: argparse.Namespace) -> None:
     print(json.dumps(stats, ensure_ascii=False))
 
 
+def cmd_seed_characters(a: argparse.Namespace) -> None:
+    from .characters import seed_characters
+    from .db import connect
+    con = connect(a.db)
+    try:
+        stats = seed_characters(con)
+    except ValueError as e:
+        _die(str(e))
+    finally:
+        con.close()
+    print(json.dumps(stats, ensure_ascii=False))
+
+
 def cmd_serve(a: argparse.Namespace) -> None:
     import uvicorn
 
@@ -78,6 +91,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dir", help="export root (containing data/) or the data/ dir itself")
     _db_arg(s)
     s.set_defaults(fn=cmd_import_public)
+
+    s = sub.add_parser("seed-characters", help="create/update the public seed characters (app/weide/seed); idempotent")
+    _db_arg(s)
+    s.set_defaults(fn=cmd_seed_characters)
 
     s = sub.add_parser("serve", help=f"run the web app (default port {config.DEFAULT_PORT})")
     s.add_argument("--host", default="127.0.0.1")
