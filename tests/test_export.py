@@ -20,7 +20,7 @@ from weide.importer import import_public
 from .conftest import REPO
 
 DATA = REPO / "data"
-INTENTIONAL_NEW_KEYS = {"generation"}
+INTENTIONAL_NEW_KEYS = {"generation", "robot", "disclaimer"}   # additive fields the live data/ predates
 LIVE_NAME, LIVE_TAGLINE = "Weide", "Das Netzwerk für Creator mit Auslauf"     # what the live site still shows
 
 

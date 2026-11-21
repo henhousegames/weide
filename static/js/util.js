@@ -56,6 +56,9 @@ export const icons = {
 };
 
 const nf = new Intl.NumberFormat("de-DE");
+// Same text as config.DISCLAIMER; /api/meta sends it, but older static data/meta.json files do not.
+export const DISCLAIMER = "Fiktive, KI-generierte Inhalte. Keine Verbindung zu Unitree Robotics oder NVIDIA; Marken gehören ihren Inhabern.";
+
 export const num = (n) => nf.format(n ?? 0);
 
 export function compact(n) {

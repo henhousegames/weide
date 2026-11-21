@@ -1,7 +1,7 @@
 // Shared building blocks: ear tags, avatars, media, reactions, post cards.
 import { api } from "./api.js";
 import { videoPlayer } from "./player.js";
-import { compact, h, icons, num, plural, store, when } from "./util.js";
+import { DISCLAIMER, compact, h, icons, num, plural, store, when } from "./util.js";
 
 export const state = { meta: null };
 
@@ -131,6 +131,19 @@ export function genBadge(post, { withMissing = false } = {}) {
   return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Keine Generierungsdetails verfügbar") : null;
 }
 
+export const disclaimer = () => (typeof state.meta?.disclaimer === "string" && state.meta.disclaimer) || DISCLAIMER;
+
+// robot accounts: the flag from the API, or the kind for data exported before the flag existed
+export const isRobot = (account) => account?.robot === true || (account?.robot !== false && account?.kind === "robot");
+
+export function robotNote(post) {
+  return isRobot(post.account) ? h("p", { class: "robot-note" }, disclaimer()) : null;
+}
+
+export function siteFooter() {
+  return h("footer", { class: "site-foot" }, h("p", {}, disclaimer()));
+}
+
 export function postHead(post) {
   return h("div", { class: "post__head" },
     avatar(post.account, 40),
@@ -152,6 +165,7 @@ export function postCard(post) {
       reactionBar(post, { showComments: false }),
       post.hashtags ? captionNode(post, false) : null,
       genBadge(post),
+      robotNote(post),
       h("a", { class: "post__more", href }, n ? [icons.comment(), plural(n, "Kommentar", "Kommentare")] : "Zum Post"));
   }
   const cap = post.caption || post.hashtags
@@ -165,5 +179,6 @@ export function postCard(post) {
         postHead(post),
         cap,
         genBadge(post)),
-      reactionBar(post, { showComments: true, rail: true })));
+      reactionBar(post, { showComments: true, rail: true })),
+    robotNote(post));
 }

@@ -62,7 +62,7 @@ FULL_RELOAD_SECONDS = 600         # full re-read: picks up later approvals/revoc
 PREVIEW_STATIC = Path(__file__).resolve().parent / "preview_static"
 ID_PREFIX = "vs-"
 STUDIO = {"slug": "studio-entwurf", "handle": "@studio.entwurf", "display_name": "Studio (Entwurf)",
-          "kind": "other", "avatar_url": None, "color": "#ffc928"}
+          "kind": "other", "avatar_url": None, "color": "#ffc928", "robot": False}
 MARK_APPROVED = "FREIGEGEBEN – noch nicht live"
 MARK_DRAFT = "ENTWURF"
 PROXY_HEADERS = ("content-type", "content-encoding", "content-length", "content-range", "accept-ranges", "last-modified", "etag")

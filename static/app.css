@@ -691,3 +691,15 @@ a.gen-badge:hover { color: var(--ink); background: var(--ground-2); }
 .gen__nodes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .gen__nodehead { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .gen__nodeid { color: var(--ink-3); font-size: 12px; font-feature-settings: "tnum"; }
+
+/* --- disclaimer: page footer and the line on robot posts ------------------------------------ */
+.site-foot { padding: 28px 20px 24px; border-top: 1px solid var(--line); margin-top: 8px; }
+.site-foot p {
+  margin: 0 auto; max-width: 68ch; text-align: center; color: var(--ink-3);
+  font-size: 12px; line-height: 1.5; font-variation-settings: "wdth" 90; text-wrap: balance;
+}
+.robot-note {
+  margin: 8px 4px 0; color: var(--ink-3); font-size: 11.5px; line-height: 1.45;
+  font-variation-settings: "wdth" 88; text-wrap: pretty;
+}
+.postpage .robot-note { margin-left: 0; }
