@@ -168,7 +168,7 @@ function inputItem(i) {
   const { role, kind, type, label, post_id: postId, public_id: publicId, private: priv, generated, ...rest } = i;
   const what = [role, kind || type].filter(Boolean).join(" · ");
   let body;
-  if (priv) body = h("span", { class: "gen__private" }, label || "private input");
+  if (priv) body = h("span", { class: "gen__private" }, label || "privater Input");
   else if (postId != null) {
     body = [h("a", { href: `#/p/${postId}` }, label || `Post ${postId}`),
       publicId ? [" · ", h("a", { href: `#/g/${encodeURIComponent(publicId)}` }, "Generierung")] : null];
@@ -208,7 +208,7 @@ export async function generationView(root, publicId) {
     backLink(),
     h("article", { class: "genpage" },
       h("h1", { class: "view-title" }, "Generierung"),
-      h("p", { class: "view-sub" }, label ? `Generated with ${label}` : "Generierungsdetails",
+      h("p", { class: "view-sub" }, label ? `Erstellt mit ${label}` : "Generierungsdetails",
         postId != null ? [" · ", h("a", { href: `#/p/${postId}` }, "Zum Post")] : null),
       h("p", { class: "gen__id" }, h("span", { class: "tag" }, pid)),
       ...sections));

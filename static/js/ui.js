@@ -115,15 +115,15 @@ export function reactionBar(post, { showComments = true } = {}) {
   return bar;
 }
 
-// "Generated with <model>" links to the public generation summary (#/g/<public_id>). Legacy posts have
+// "Erstellt mit <model>" links to the public generation summary (#/g/<public_id>). Legacy posts have
 // no generation data; only the post page says so (withMissing), feed cards stay quiet.
 export function genBadge(post, { withMissing = false } = {}) {
   const g = post.generation;
   if (g?.public_id) {
     return h("a", { class: "gen-badge", href: `#/g/${encodeURIComponent(g.public_id)}` },
-      `Generated with ${g.model_label || "an unnamed model"}`);
+      `Erstellt mit ${g.model_label || "einem unbenannten Modell"}`);
   }
-  return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Generation details unavailable") : null;
+  return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Keine Generierungsdetails verfügbar") : null;
 }
 
 export function postHead(post) {

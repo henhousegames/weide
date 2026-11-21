@@ -12,7 +12,7 @@ data/gen/<public_id>.json:
 * string values are cleaned: absolute paths and URLs become their basename, IP addresses, host:port
   pairs and token-looking strings become "[redacted]", internal run ids (`generation:<run>`) are removed.
 * inputs are listed only when they are public themselves (a published post, or produced by the
-  generation itself); anything else becomes {"private": true, "label": "private input"}.
+  generation itself); anything else becomes {"private": true, "label": "privater Input"}.
 
 `summary_leaks()` re-checks a summary with the same rules (used by the export leak check).
 """
@@ -27,7 +27,7 @@ from .db import jload
 
 PUBLIC_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REDACTED = "[redacted]"
-PRIVATE_INPUT = "private input"
+PRIVATE_INPUT = "privater Input"
 
 _DROP_EXACT = {
     "path", "paths", "file", "files", "filename", "filenames", "filepath", "dir", "directory", "cwd", "log", "logs",
