@@ -19,6 +19,8 @@ concurrency:
 
 jobs:
   deploy:
+    # only after the rename: pushes to the old repo never run a (failing) Pages deploy
+    if: github.repository == 'henhousegames/henhouse'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

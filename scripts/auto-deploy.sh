@@ -6,7 +6,9 @@
 #                                     commits, pushes or renames
 #
 # Steps: lock (no overlapping runs) -> repo must be on a clean main that fast-forwards to origin/main
-# -> `weide deploy` (pull-approved + export into site/ + leak check) -> if site/ changed: commit + push
+# -> `weide deploy` (pull-approved + export into site/ + leak check) -> until the one-time switch is
+# done, stop here (no commit, no push) while the export has no published generation post
+# -> if site/ changed: commit + push
 # -> one-time switch (rename repo weide -> henhouse, Pages source = GitHub Actions, run pages.yml,
 # wait until the site serves the newest published generation), guarded by a marker in private/.
 #
@@ -189,6 +191,16 @@ one_time_switch() {
 if [ "$DRY_RUN" = 1 ]; then log "auto-deploy start (dry-run)"; else log "auto-deploy start"; fi
 sync_main
 build_site
+if [ ! -f "$MARKER" ] && [ -z "$(newest_public_id)" ]; then
+  # before the first publication the timer is a no-op: no commit, no push, site/ back to HEAD
+  if [ "$SITE_CHANGED" = 1 ]; then
+    git checkout --quiet HEAD -- site 2>/dev/null || true
+    git clean -fdq -- site
+  fi
+  log "no published generation yet; not committing site/ (switch pending)"
+  log "auto-deploy done"
+  exit 0
+fi
 if [ "$SITE_CHANGED" = 1 ]; then
   commit_and_push
 else
