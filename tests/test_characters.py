@@ -34,7 +34,7 @@ def test_seed_characters_idempotent(db_path, capsys):
     con.close()
     main(["seed-characters", "--db", str(db_path)])
     main(["seed-characters", "--db", str(db_path)])
-    assert json.loads(capsys.readouterr().out.splitlines()[-1]) == {"characters": ["maehbot"]}
+    assert json.loads(capsys.readouterr().out.splitlines()[-1]) == {"characters": ["gustav", "hopfried", "maehbot"]}
     con = db.connect(db_path)
     assert con.execute("SELECT COUNT(*) FROM accounts WHERE slug='maehbot'").fetchone()[0] == 1
     ch = con.execute("SELECT c.kind, c.style_guidance FROM characters c JOIN accounts a ON a.id=c.account_id "
@@ -44,7 +44,7 @@ def test_seed_characters_idempotent(db_path, capsys):
                        "WHERE a.slug='maehbot'").fetchone()[0] == 0
     con.close()
 
-    c = TestClient(create_app(db_path))
+    c = TestClient(create_app(db_path, all_accounts=True))        # as the preview sees it
     a = c.get("/api/accounts/maehbot").json()
     assert set(a) == PROFILE_KEYS
     assert a["kind"] == "robot" and a["display_name"] == "Mähbot 7" and a["posts"] == []

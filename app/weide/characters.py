@@ -5,6 +5,7 @@ with its in-world profile in the same fields the API returns (about, facts, valu
 optional `character` block for the characters row. Everything in these files is public by design; the
 private style guidance of a seeded character starts empty. Seeding is idempotent: accounts are matched
 by slug, the characters row by account, and private profile keys already in the database are kept.
+A seeded character is not public (API, export) until its first post is published; the preview shows it.
 """
 from __future__ import annotations
 

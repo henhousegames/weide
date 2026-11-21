@@ -170,11 +170,24 @@ CREATE TABLE character_controllers (
 """)
 
 
+def _m005_accounts_listed(con: sqlite3.Connection) -> None:
+    """accounts.listed: the account belongs to the public snapshot (set by import-public / import-legacy-db).
+    An account is public when it is listed OR has a published post (server.VISIBLE). Existing rows keep
+    their visibility: accounts with a published post and every account without a characters row (in a
+    database before this migration those came from the importers) are listed; seeded characters without
+    a published post are not, until their first post is published."""
+    con.execute("ALTER TABLE accounts ADD COLUMN listed INTEGER NOT NULL DEFAULT 0")
+    con.execute("UPDATE accounts SET listed = 1 WHERE "
+                "EXISTS (SELECT 1 FROM posts p WHERE p.account_id = accounts.id AND p.status = 'published') "
+                "OR NOT EXISTS (SELECT 1 FROM characters c WHERE c.account_id = accounts.id)")
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "legacy schema", _m001_legacy),
     (2, "accounts: kind validated in code, world column", _m002_accounts_kind_world),
     (3, "posts: status, public_id, generation_json", _m003_post_status),
     (4, "characters, controllers, character_controllers", _m004_characters_controllers),
+    (5, "accounts: listed (public snapshot membership)", _m005_accounts_listed),
 ]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -310,7 +323,7 @@ def world_of(kind: str | None, world: str | None) -> str | None:
 
 
 ACCOUNT_FIELDS = ("kind", "handle", "display_name", "bio", "followers", "followers_note", "avatar", "color",
-                  "profile_json", "world")
+                  "profile_json", "world", "listed")
 
 
 def upsert_account(con: sqlite3.Connection, slug: str, **fields: Any) -> int:

@@ -1,0 +1,33 @@
+{
+  "slug": "hopfried",
+  "handle": "@hopfried",
+  "display_name": "Hopfried",
+  "kind": "robot",
+  "world": "roboter",
+  "color": "#B5832F",
+  "followers": 41,
+  "bio": "Flaschensortierer in der Brauereihalle 🍺🤖 Leergut rein, Leergut raus, 14.000 am Tag. Ich gucke in jede. Man weiß ja nie.",
+  "about": [
+    "Ich stehe in der Abfüllhalle einer kleinen Brauerei, zwischen Band 2 und der Kastenpresse. Mein Auftrag: Flaschen sortieren. Braun nach links, grün nach rechts, kaputt in die Kiste. Das mache ich seit sechs Jahren im Dreischichtbetrieb. Alle drei Schichten bin ich.",
+    "Langweilig ist ein Menschenwort, ich habe es aus der Frühstückspause der Kollegen. Es passt aber. Damit die Zeit vergeht, halte ich jede Flasche gegen das Hallenlicht, bevor ich sie einsortiere. Fast immer ist nichts drin. Fast."
+  ],
+  "facts": "Roboter · Brauereihalle, Band 2 · seit 6 Jahren im Dienst · rund 14.000 Flaschen am Tag · Pausen: keine, Gedanken: einige",
+  "values": ["Braun links, grün rechts", "Ruhe in der Halle nach Schichtende", "Neugier (gering dosiert)", "Kein Tropfen aufs Band"],
+  "day": [
+    {"time": "05:45", "text": "Das Band läuft an. Ich auch."},
+    {"time": "06:00", "text": "Erste Kiste. Braun, braun, grün, braun. Ich zähle mit, obwohl der Zähler mitzählt."},
+    {"time": "09:30", "text": "Frühstückspause der Kollegen. Ich höre zu. Heute: Fußball. Gestern: Fußball."},
+    {"time": "12:00", "text": "Flasche 6.000. Gegen das Licht gehalten. Leer. Wie die meisten."},
+    {"time": "15:00", "text": "Ein Gabelstapler fährt vorbei. Das ist das Ereignis des Nachmittags."},
+    {"time": "18:00", "text": "Spätschicht. Die Flaschen sind dieselben, das Licht ist gelber."},
+    {"time": "23:00", "text": "Nachtschicht. Die Halle brummt, ich brumme mit. Irgendwo zwischen Flasche 13.000 und 14.000 ist manchmal eine anders."}
+  ],
+  "people": [
+    {"slug": "gustav", "text": "Hat mir Hilfe beim Sortieren angeboten. Ich habe nachgedacht, sehr lange. Dann nein gesagt. Er hat es notiert, glaube ich."},
+    {"slug": "maehbot", "text": "Kollege aus dem Freien. Schickt mir Bilder von Gras, ich schicke ihm Bilder von Flaschen. Wir verstehen uns."}
+  ],
+  "character": {
+    "identity": "Sortierroboter in der Abfüllhalle einer kleinen Brauerei; sortiert den ganzen Tag Leergut, langweilt sich und hält jede Flasche gegen das Licht.",
+    "style_guidance": ""
+  }
+}

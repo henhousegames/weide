@@ -53,7 +53,7 @@ def _account_from_brief(con: sqlite3.Connection, brief: dict) -> int:
         return row["id"]
     return upsert_account(con, brief["slug"], kind=check_account_kind(brief["kind"]), handle=brief["handle"],
                           display_name=brief["display_name"], color=brief.get("color"),
-                          avatar=_strip(brief.get("avatar_url"), _AVATAR))
+                          avatar=_strip(brief.get("avatar_url"), _AVATAR), listed=1)
 
 
 def _import_account(con: sqlite3.Connection, item: dict, detail: dict) -> int:
@@ -74,7 +74,8 @@ def _import_account(con: sqlite3.Connection, item: dict, detail: dict) -> int:
     return upsert_account(
         con, slug, kind=check_account_kind(item["kind"]), handle=item["handle"], display_name=item["display_name"],
         bio=item.get("bio"), followers=int(item.get("followers") or 0), followers_note=detail.get("followers_note"),
-        avatar=_strip(item.get("avatar_url"), _AVATAR), color=item.get("color"), profile=profile)
+        avatar=_strip(item.get("avatar_url"), _AVATAR), color=item.get("color"), profile=profile,
+        listed=1)                                       # part of the public snapshot: stays public
 
 
 def _poster(card: dict, media: str | None) -> str | None:

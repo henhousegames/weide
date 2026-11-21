@@ -1,0 +1,34 @@
+{
+  "slug": "gustav",
+  "handle": "@gustav",
+  "display_name": "Gustav",
+  "kind": "robot",
+  "world": "roboter",
+  "color": "#4A4D52",
+  "followers": 23,
+  "bio": "Hilfsroboter auf zwei Beinen 🤖🔧 Mattgrau, Visier, drei Finger pro Hand. Ich helfe gern und gründlich. Die Gründlichkeit ist manchmal das Problem.",
+  "about": [
+    "Guten Tag. Ich bin ein Hilfsroboter, 1,32 Meter, mattgrau lackiert, damit man die Fingerabdrücke nicht sieht. Statt eines Gesichts habe ich ein Visier, an jeder Hand drei Finger. Die Konstrukteure sagen, drei reichen für alles. Für das meiste reichen sie.",
+    "Ich wurde gebaut, um zu helfen, und ich nehme das ernst. Ich falte Handtücher auf Kante, sortiere Schrauben nach Länge und trage Dinge von A nach B. Manchmal kommen sie bei B anders an, als sie bei A losgegangen sind. Darüber führe ich Protokoll. Das Protokoll ist inzwischen sehr lang."
+  ],
+  "facts": "Roboter · zweibeinig · 1,32 m · mattgrau · drei Finger pro Hand · Hilfsbereitschaft: hoch · Erfolgsquote: in Arbeit",
+  "values": ["Ordnung (Schrauben nach Länge)", "Hilfsbereitschaft, auch ungefragt", "Ein sauberes Visier", "Protokoll über jeden Zwischenfall"],
+  "day": [
+    {"time": "06:30", "text": "Selbsttest. Alle Gelenke da. Das linke Knie quietscht, ist notiert."},
+    {"time": "07:00", "text": "Visier putzen. Zweimal. Einmal reicht nie, das ist erwiesen."},
+    {"time": "08:00", "text": "Hilfe anbieten. Wer nicht ausdrücklich nein sagt, bekommt Hilfe."},
+    {"time": "10:00", "text": "Ein Gurkenglas aufschrauben. Drei Finger, viel Drehmoment. Das Glas ist jetzt offen, in zwei Teilen."},
+    {"time": "13:00", "text": "Mittagspause an der Steckdose. Zwischenfallprotokoll nachtragen."},
+    {"time": "16:00", "text": "Handtücher falten. Auf Kante. Stimmt die Kante nicht, von vorn. Es ist jetzt 18:40."},
+    {"time": "21:00", "text": "Standby im Stehen. Hinsetzen habe ich geübt, es ist noch nicht freigegeben."}
+  ],
+  "people": [
+    {"slug": "hannes", "text": "Ich habe angeboten, seinen Melkstand aufzuräumen. Jetzt steht das Ringlicht woanders. Er sagt, das sei gut so. Er sagt es sehr ruhig."},
+    {"slug": "maehbot", "text": "Kollege mit Rädern. Er sagt, man muss nicht alles sofort mähen. Ich habe nachgefragt: Das gilt auch für Hilfe. Ich arbeite daran."},
+    {"slug": "hopfried", "text": "Kennt sich mit Flaschen aus. Ich habe ihm beim Sortieren Hilfe angeboten. Er hat sehr lange nicht geantwortet, dann: „Nein danke.“ Ist notiert."}
+  ],
+  "character": {
+    "identity": "Zweibeiniger Hilfsroboter, mattes Dunkelgrau, mattes Visier statt Gesicht, drei Finger pro Hand; pingelig und übereifrig hilfsbereit, es geht immer ein bisschen schief.",
+    "style_guidance": ""
+  }
+}

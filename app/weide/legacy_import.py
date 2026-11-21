@@ -62,7 +62,9 @@ def _avatar(slug: str, legacy: str | None) -> str | None:
     return f"{slug}.jpg" if legacy else None
 
 
-def _import_accounts(src: sqlite3.Connection, con: sqlite3.Connection) -> dict[int, int]:
+def _import_accounts(src: sqlite3.Connection, con: sqlite3.Connection, public: set[str]) -> dict[int, int]:
+    """Accounts of the public snapshot are marked `listed` (public even without a published post);
+    the others are public only once they have a published post."""
     ids: dict[int, int] = {}
     for r in src.execute("SELECT * FROM accounts ORDER BY id"):
         slug = r["slug"]
@@ -81,7 +83,8 @@ def _import_accounts(src: sqlite3.Connection, con: sqlite3.Connection) -> dict[i
         ids[r["id"]] = upsert_account(
             con, slug, kind=r["kind"], handle=r["handle"], display_name=r["display_name"],
             bio=r["bio"], followers=check_count(r["followers"], "followers"), followers_note=r["followers_note"],
-            avatar=_avatar(slug, r["avatar"]), color=r["color"], profile_json=jdump(profile) if profile else None)
+            avatar=_avatar(slug, r["avatar"]), color=r["color"], profile_json=jdump(profile) if profile else None,
+            **({"listed": 1} if slug in public else {}))
     return ids
 
 
@@ -172,7 +175,7 @@ def import_legacy_db(con: sqlite3.Connection, legacy_path: str | Path, public_ro
         legacy_slugs = {r[0] for r in src.execute("SELECT slug FROM accounts")}
         legacy_posts = {r[0] for r in src.execute("SELECT id FROM posts")}
         try:
-            accounts = _import_accounts(src, con)
+            accounts = _import_accounts(src, con, snap["accounts"])
             stats: dict = {"accounts": len(accounts)}
             stats.update(_import_posts(src, con, accounts, snap["posts"]))
             stats["comments"] = _import_comments(src, con, accounts)

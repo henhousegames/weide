@@ -68,8 +68,8 @@ def cmd_import_legacy_db(a: argparse.Namespace) -> None:
     print(json.dumps(stats, ensure_ascii=False))
     snap = stats["snapshot"]
     if snap["accounts_not_public"]:
-        print("warning: accounts not in the public snapshot become visible: " + ", ".join(snap["accounts_not_public"]),
-              file=sys.stderr)
+        print("note: accounts not in the public snapshot stay hidden until their first published post: "
+              + ", ".join(snap["accounts_not_public"]), file=sys.stderr)
 
 
 def cmd_seed_characters(a: argparse.Namespace) -> None:
