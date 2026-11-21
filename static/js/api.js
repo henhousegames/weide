@@ -41,6 +41,11 @@ const staticApi = {
     if (!/^\d+$/.test(String(id))) return Promise.reject(new ApiError(404));
     return get(`data/posts/${id}.json`);
   },
+  // (named genSummary: the export leak check rejects the run-id prefix "generation" + ":" in frontend files)
+  genSummary: (publicId) => {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(publicId))) return Promise.reject(new ApiError(404));
+    return get(`data/gen/${publicId}.json`);
+  },
   accounts: () => get("data/accounts.json"),
   account: (slug) => get(`data/accounts/${encodeURIComponent(String(slug).replace(/^@/, ""))}.json`),
   async top(params) {
@@ -62,6 +67,7 @@ const liveApi = {
   feed: (offset = 0, limit = 10, kinds = null) =>
     get(`/api/feed?offset=${offset}&limit=${limit}${kinds?.length ? `&kind=${encodeURIComponent(kinds.join(","))}` : ""}`),
   post: (id) => get(`/api/posts/${encodeURIComponent(id)}`),
+  genSummary: (publicId) => get(`/api/generations/${encodeURIComponent(publicId)}`),
   accounts: () => get("/api/accounts"),
   account: (slug) => get(`/api/accounts/${encodeURIComponent(slug)}`),
   top: (params) => get(`/api/top?${new URLSearchParams(params)}`),

@@ -1,9 +1,9 @@
-// Hash router: #/  #/w/<world>  #/p/<id>  #/u/<slug>  #/heute[/<YYYY-MM-DD>]  #/woche[/<YYYY-Www>]  #/leute
+// Hash router: #/  #/w/<world>  #/p/<id>  #/u/<slug>  #/heute[/<YYYY-MM-DD>]  #/woche[/<YYYY-Www>]  #/leute  #/g/<public_id>
 import { api } from "./api.js";
 import { resetPlayers } from "./player.js";
 import { state } from "./ui.js";
 import { dayLabel, h, mount } from "./util.js";
-import { feedView, notFound, peopleView, postView, profileView, railView, topView } from "./views.js";
+import { feedView, generationView, notFound, peopleView, postView, profileView, railView, topView } from "./views.js";
 
 const app = document.getElementById("app");
 const view = document.getElementById("view");
@@ -23,6 +23,7 @@ function route() {
     case "u": return { tab: arg === undefined ? "leute" : null, view: "profile", missing: "Dieses Profil gibt es nicht.", run: (r) => profileView(r, arg) };
     case "heute": return { tab: "heute", view: "heute", missing: "Diesen Tag gibt es nicht.", run: (r) => topView(r, "heute", arg) };
     case "woche": return { tab: "woche", view: "woche", missing: "Diese Woche gibt es nicht.", run: (r) => topView(r, "woche", arg) };
+    case "g": return { tab: null, view: "generation", missing: "Zu diesem Post gibt es keine Generierungsdetails.", run: (r) => generationView(r, arg) };
     case "leute": return { tab: "leute", view: "leute", run: (r) => peopleView(r) };
     default: return { tab: null, view: "error", run: (r) => notFound(r, "Diese Seite gibt es nicht.") };
   }

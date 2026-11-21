@@ -115,6 +115,17 @@ export function reactionBar(post, { showComments = true } = {}) {
   return bar;
 }
 
+// "Generated with <model>" links to the public generation summary (#/g/<public_id>). Legacy posts have
+// no generation data; only the post page says so (withMissing), feed cards stay quiet.
+export function genBadge(post, { withMissing = false } = {}) {
+  const g = post.generation;
+  if (g?.public_id) {
+    return h("a", { class: "gen-badge", href: `#/g/${encodeURIComponent(g.public_id)}` },
+      `Generated with ${g.model_label || "an unnamed model"}`);
+  }
+  return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Generation details unavailable") : null;
+}
+
 export function postHead(post) {
   return h("div", { class: "post__head" },
     avatar(post.account, 40),
@@ -131,6 +142,7 @@ export function postCard(post) {
     media(post),
     reactionBar(post, { showComments: false }),
     post.kind === "text" ? (post.hashtags ? captionNode(post, false) : null) : captionNode(post, long),
+    genBadge(post),
     h("a", { class: "post__more", href: `#/p/${post.id}` },
       n ? [icons.comment(), plural(n, "Kommentar", "Kommentare")] : "Zum Post"));
 }

@@ -1,7 +1,7 @@
 // Views: feed, post detail, profile, leaderboards, people, the desktop rail.
 // Copy is in-world German; CLI hints live in the README (and the collapsed "Quelle und Ranking").
 import { api } from "./api.js";
-import { avatar, earTag, media, postCard, postHead, reactionBar, state } from "./ui.js";
+import { avatar, earTag, genBadge, media, postCard, postHead, reactionBar, state } from "./ui.js";
 import { compact, copy, dayLabel, dec, h, icons, longDay, mount, num, plural, score, when } from "./util.js";
 
 const PAGE = 8;
@@ -118,6 +118,7 @@ export async function postView(root, id) {
         reactionBar(p, { showComments: false }),
         likedBy(p),
         caption,
+        genBadge(p, { withMissing: true }),
         moments,
         h("section", { class: "block" },
           h("h2", {}, n ? plural(n, "Kommentar", "Kommentare") : "Kommentare"),
@@ -126,6 +127,91 @@ export async function postView(root, id) {
         h("details", { class: "more" }, h("summary", {}, "Quelle und Ranking"),
           h("dl", { class: "facts" }, facts.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))))),
   );
+}
+
+// --- generation details (#/g/<public_id>) -----------------------------------------------------------
+// The summary is rendered generically: known sections first (model, task/preset, parameters, prompt,
+// workflow, inputs), then every other field, so new settings show up without frontend changes.
+
+function fmt(v) {
+  if (v === null || v === undefined || v === "") return "–";
+  if (typeof v === "boolean") return v ? "ja" : "nein";
+  if (Array.isArray(v) && v.every((x) => x === null || typeof x !== "object")) return v.map(String).join(", ");
+  if (typeof v === "object") return h("pre", { class: "gen__json" }, JSON.stringify(v, null, 2));
+  return String(v);                // numbers verbatim (a seed is not 1.234.567)
+}
+
+function kvTable(obj) {
+  return h("table", { class: "gen__table" }, h("tbody", {},
+    Object.entries(obj).map(([k, v]) => h("tr", {}, h("th", { scope: "row" }, k), h("td", {}, fmt(v))))));
+}
+
+function workflowBlock(wf) {
+  const nodes = wf && typeof wf === "object" ? (wf.nodes ?? wf) : null;
+  const list = Array.isArray(nodes) ? nodes.map((n, i) => [n?.id ?? i, n]) : nodes && typeof nodes === "object" ? Object.entries(nodes) : null;
+  const graph = list && list.every(([, n]) => n && typeof n === "object")
+    ? h("ol", { class: "gen__nodes" }, list.map(([id, n]) => {
+      const { inputs, class_type: ct, type, ...rest } = n;
+      const params = { ...(inputs && typeof inputs === "object" && !Array.isArray(inputs) ? inputs : inputs !== undefined ? { inputs } : {}), ...rest };
+      return h("li", { class: "gen__node" },
+        h("div", { class: "gen__nodehead" }, h("span", { class: "gen__nodeid" }, `#${id}`), h("b", {}, ct || type || "Knoten")),
+        Object.keys(params).length ? kvTable(params) : null);
+    }))
+    : fmt(wf);
+  const count = list ? list.length : null;
+  return h("details", { class: "more gen__workflow" },
+    h("summary", {}, count ? `Workflow (${plural(count, "Knoten", "Knoten")})` : "Workflow"), graph);
+}
+
+function inputItem(i) {
+  if (!i || typeof i !== "object") return h("li", {}, fmt(i));
+  const { role, kind, type, label, post_id: postId, public_id: publicId, private: priv, generated, ...rest } = i;
+  const what = [role, kind || type].filter(Boolean).join(" · ");
+  let body;
+  if (priv) body = h("span", { class: "gen__private" }, label || "private input");
+  else if (postId != null) {
+    body = [h("a", { href: `#/p/${postId}` }, label || `Post ${postId}`),
+      publicId ? [" · ", h("a", { href: `#/g/${encodeURIComponent(publicId)}` }, "Generierung")] : null];
+  } else if (generated) body = "in diesem Lauf erzeugt";
+  else body = label || "–";
+  return h("li", { class: "gen__input" }, what ? h("span", { class: "gen__role" }, what) : null, h("span", {}, body),
+    Object.keys(rest).length ? kvTable(rest) : null);
+}
+
+export async function generationView(root, publicId) {
+  const g = await api.genSummary(publicId);
+  const { public_id: pid, post_id: postId, model_label: label, model, version, license, task, preset,
+    parameters, prompt, negative_prompt: negative, workflow, inputs, ...other } = g;
+  const modelInfo = model && typeof model === "object" ? { ...model } : { ...(model != null ? { name: model } : {}) };
+  if (version != null) modelInfo.version = version;
+  if (license != null) modelInfo.license = license;
+  const sections = [];
+  if (Object.keys(modelInfo).length) sections.push(h("section", { class: "block" }, h("h2", {}, "Modell"), kvTable(modelInfo)));
+  if (task != null || preset != null) {
+    sections.push(h("section", { class: "block" }, h("h2", {}, "Aufgabe"),
+      kvTable({ ...(task != null ? { task } : {}), ...(preset != null ? { preset } : {}) })));
+  }
+  if (parameters && typeof parameters === "object") sections.push(h("section", { class: "block" }, h("h2", {}, "Parameter"), kvTable(parameters)));
+  if (prompt != null || negative != null) {
+    sections.push(h("section", { class: "block" }, h("h2", {}, "Prompt"),
+      prompt != null ? h("p", { class: "gen__prompt" }, typeof prompt === "string" ? prompt : fmt(prompt)) : null,
+      negative != null ? [h("h3", { class: "gen__sub" }, "Negativ-Prompt"), h("p", { class: "gen__prompt gen__prompt--neg" }, typeof negative === "string" ? negative : fmt(negative))] : null));
+  }
+  if (inputs !== undefined) {
+    const list = Array.isArray(inputs) ? inputs : [inputs];
+    sections.push(h("section", { class: "block" }, h("h2", {}, "Eingaben"),
+      list.length ? h("ul", { class: "gen__inputs" }, list.map(inputItem)) : h("p", { class: "empty" }, "Keine.")));
+  }
+  if (Object.keys(other).length) sections.push(h("section", { class: "block" }, h("h2", {}, "Weitere Angaben"), kvTable(other)));
+  if (workflow !== undefined) sections.push(h("section", { class: "block" }, workflowBlock(workflow)));
+  mount(root,
+    backLink(),
+    h("article", { class: "genpage" },
+      h("h1", { class: "view-title" }, "Generierung"),
+      h("p", { class: "view-sub" }, label ? `Generated with ${label}` : "Generierungsdetails",
+        postId != null ? [" · ", h("a", { href: `#/p/${postId}` }, "Zum Post")] : null),
+      h("p", { class: "gen__id" }, h("span", { class: "tag" }, pid)),
+      ...sections));
 }
 
 // --- profile -----------------------------------------------------------------------------------
