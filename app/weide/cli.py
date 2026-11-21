@@ -1,6 +1,6 @@
 """Command line: `uv run weide <command>`.
 
-Commands: migrate, import-public, seed-characters, serve, export-static.
+Commands: migrate, import-public, seed-characters, serve, export-static, pull-approved, deploy.
 """
 from __future__ import annotations
 
@@ -79,6 +79,36 @@ def cmd_export_static(a: argparse.Namespace) -> None:
         _die(f"leak check failed ({len(res['leaks'])} hits): " + "; ".join(res["leaks"][:10]), code=1)
 
 
+def cmd_pull_approved(a: argparse.Namespace) -> None:
+    from .db import connect
+    from .publish import PublishError, ServiceSettings, pull_approved
+    try:
+        settings = ServiceSettings.load()
+    except PublishError as e:
+        _die(str(e))
+    con = connect(a.db)
+    try:
+        res = pull_approved(con, settings, dry_run=a.dry_run, log=lambda s: print(s, file=sys.stderr))
+    finally:
+        con.close()
+    print(json.dumps(res, ensure_ascii=False))
+    if res["failed"]:
+        _die(f"{len(res['failed'])} item(s) failed", code=1)
+
+
+def cmd_deploy(a: argparse.Namespace) -> None:
+    from .deploy import deploy
+    from .publish import PublishError
+    try:
+        res = deploy(Path(a.site), a.db, pull=not a.skip_pull, today=a.today,
+                     log=lambda s: print(s, file=sys.stderr))
+    except PublishError as e:
+        _die(str(e))
+    print(json.dumps(res, ensure_ascii=False))
+    if res["errors"]:
+        _die("; ".join(res["errors"][:10]), code=1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="weide", description=f"{config.APP_NAME}: {config.APP_TAGLINE}")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -108,6 +138,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--link", action="store_true", help="hard-link media files instead of copying (same filesystem)")
     _db_arg(s)
     s.set_defaults(fn=cmd_export_static)
+
+    s = sub.add_parser("pull-approved", help="publish the generations approved in the generation service; idempotent")
+    s.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
+    _db_arg(s)
+    s.set_defaults(fn=cmd_pull_approved)
+
+    s = sub.add_parser("deploy", help="pull-approved, export-static into a site dir, leak check, report changes (no git)")
+    s.add_argument("site", nargs="?", default="site", help="site directory (default: site)")
+    s.add_argument("--skip-pull", action="store_true", help="only re-export the current database")
+    s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages")
+    _db_arg(s)
+    s.set_defaults(fn=cmd_deploy)
     return ap
 
 
