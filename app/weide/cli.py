@@ -13,7 +13,7 @@ from . import config
 
 
 def _db_arg(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--db", default=None, help="SQLite file (default: $WEIDE_DB or <private dir>/weide.db)")
+    p.add_argument("--db", default=None, help="SQLite file (default: $HENHOUSE_DB / $WEIDE_DB or <private dir>/henhouse.db)")
 
 
 def _die(msg: str, code: int = 2) -> None:
@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("export-static", help="write a static snapshot (published posts only) for a plain file host")
     s.add_argument("outdir")
-    s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages (default: $WEIDE_TODAY or local date)")
+    s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages (default: $HENHOUSE_TODAY / $WEIDE_TODAY or local date)")
     s.add_argument("--link", action="store_true", help="hard-link media files instead of copying (same filesystem)")
     _db_arg(s)
     s.set_defaults(fn=cmd_export_static)

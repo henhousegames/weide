@@ -67,10 +67,23 @@ function captionNode(post, clamp) {
     post.hashtags ? [post.kind === "text" ? "" : " ", h("span", { class: "caption__tags" }, post.hashtags)] : null);
 }
 
-const pressedKey = (id) => `weide:r:${id}`;
+// Pressed reactions per post live in localStorage under "<app slug>:r:<id>" (slug derived from the app
+// name like config.APP_SLUG). Keys written under the previous name ("weide:r:<id>") are still read and
+// merged in, so returning visitors keep their reactions after the rename.
+const LEGACY_SLUG = "weide";
+const appSlug = () => String(state.meta?.app_name || "").toLowerCase().replace(/[^a-z0-9]+/g, "") || "app";
+const pressedKey = (id) => `${appSlug()}:r:${id}`;
+
+function loadPressed(id) {
+  const now = store(pressedKey(id)) || [];
+  const old = appSlug() === LEGACY_SLUG ? [] : store(`${LEGACY_SLUG}:r:${id}`) || [];
+  const all = [...new Set([...now, ...old])];
+  if (all.length > now.length) store(pressedKey(id), all);     // migrate once to the new key
+  return new Set(all);
+}
 
 export function reactionBar(post, { showComments = true } = {}) {
-  const pressed = new Set(store(pressedKey(post.id)) || []);
+  const pressed = loadPressed(post.id);
   const bar = h("div", { class: "reacts" });
   for (const r of state.meta?.reactions || []) {
     const count = h("span", {}, compact(post.reactions?.[r.key] || 0));

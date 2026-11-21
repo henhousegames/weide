@@ -4,14 +4,16 @@ The app name lives in APP_NAME only (plus APP_TAGLINE); the web UI reads it from
 server/export inject it into index.html. Every path is relative to the repository root or set by an
 environment variable, so nothing here assumes a particular machine layout.
 
-Environment variables:
-  WEIDE_PRIVATE_DIR  private, gitignored data (database, later prompts/personas). Default: <repo>/private
-  WEIDE_DB           SQLite database file. Default: $WEIDE_PRIVATE_DIR/weide.db
-  WEIDE_MEDIA_ROOT   web-size media files (post videos/images). Default: <repo>/media
-  WEIDE_THUMB_ROOT   pre-rendered poster thumbnails, <width>/<path>.jpg. Default: <repo>/thumb
-  WEIDE_AVATAR_ROOT  square avatar images. Default: <repo>/avatar
-  WEIDE_STATIC_DIR   frontend assets (app.css, js/). Default: <repo>/static
-  WEIDE_TODAY        YYYY-MM-DD, the world's "today" (ranking windows); default: local date
+Environment variables use the app prefix (HENHOUSE_*, derived from APP_NAME); the old WEIDE_* names
+are still read as a fallback, so existing setups keep working. The prefixed name wins when both are set.
+  HENHOUSE_PRIVATE_DIR  private, gitignored data (database, later prompts/personas). Default: <repo>/private
+  HENHOUSE_DB           SQLite database file. Default: $HENHOUSE_PRIVATE_DIR/henhouse.db, or weide.db there
+                        if only that legacy file exists
+  HENHOUSE_MEDIA_ROOT   web-size media files (post videos/images). Default: <repo>/media
+  HENHOUSE_THUMB_ROOT   pre-rendered poster thumbnails, <width>/<path>.jpg. Default: <repo>/thumb
+  HENHOUSE_AVATAR_ROOT  square avatar images. Default: <repo>/avatar
+  HENHOUSE_STATIC_DIR   frontend assets (app.css, js/). Default: <repo>/static
+  HENHOUSE_TODAY        YYYY-MM-DD, the world's "today" (ranking windows); default: local date
 """
 from __future__ import annotations
 
@@ -20,9 +22,12 @@ import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-APP_NAME = "Weide"
-APP_TAGLINE = "Das Netzwerk für Creator mit Auslauf"
+APP_NAME = "henhouse"
+APP_TAGLINE = "Das Netzwerk für Creator mit Fell, Feierabend oder Firmware"
 APP_SLUG = re.sub(r"[^a-z0-9]+", "", APP_NAME.lower()) or "app"
+ENV_PREFIX = APP_SLUG.upper() + "_"
+LEGACY_SLUG = "weide"                      # previous app name: env vars, db file, browser storage keys
+LEGACY_ENV_PREFIX = LEGACY_SLUG.upper() + "_"
 
 # --- paths -------------------------------------------------------------------------------
 PACKAGE_DIR = Path(__file__).resolve().parent              # app/weide
@@ -30,23 +35,33 @@ REPO_ROOT = PACKAGE_DIR.parent.parent                       # repository root
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
 
 
+def env(name: str) -> str | None:
+    """HENHOUSE_<name>, falling back to the legacy WEIDE_<name>."""
+    return os.environ.get(ENV_PREFIX + name) or os.environ.get(LEGACY_ENV_PREFIX + name) or None
+
+
 def _env_path(name: str, default: Path) -> Path:
-    v = os.environ.get(name)
+    v = env(name)
     return Path(v).expanduser().resolve() if v else default
 
 
-PRIVATE_DIR = _env_path("WEIDE_PRIVATE_DIR", REPO_ROOT / "private")
-DEFAULT_DB = _env_path("WEIDE_DB", PRIVATE_DIR / "weide.db")
-MEDIA_ROOT = _env_path("WEIDE_MEDIA_ROOT", REPO_ROOT / "media")
-THUMB_ROOT = _env_path("WEIDE_THUMB_ROOT", REPO_ROOT / "thumb")
-AVATAR_ROOT = _env_path("WEIDE_AVATAR_ROOT", REPO_ROOT / "avatar")
-STATIC_DIR = _env_path("WEIDE_STATIC_DIR", REPO_ROOT / "static")
+def _default_db(private: Path) -> Path:
+    new, legacy = private / f"{APP_SLUG}.db", private / f"{LEGACY_SLUG}.db"
+    return legacy if legacy.is_file() and not new.exists() else new
+
+
+PRIVATE_DIR = _env_path("PRIVATE_DIR", REPO_ROOT / "private")
+DEFAULT_DB = _env_path("DB", _default_db(PRIVATE_DIR))
+MEDIA_ROOT = _env_path("MEDIA_ROOT", REPO_ROOT / "media")
+THUMB_ROOT = _env_path("THUMB_ROOT", REPO_ROOT / "thumb")
+AVATAR_ROOT = _env_path("AVATAR_ROOT", REPO_ROOT / "avatar")
+STATIC_DIR = _env_path("STATIC_DIR", REPO_ROOT / "static")
 
 TZ = ZoneInfo("Europe/Berlin")
 DEFAULT_PORT = 8740
 
-# "Today" in the world. Defaults to the machine's local date; WEIDE_TODAY=YYYY-MM-DD overrides.
-TODAY_OVERRIDE = os.environ.get("WEIDE_TODAY")
+# "Today" in the world. Defaults to the machine's local date; HENHOUSE_TODAY=YYYY-MM-DD overrides.
+TODAY_OVERRIDE = env("TODAY")
 
 # --- media -------------------------------------------------------------------------------
 VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v"}

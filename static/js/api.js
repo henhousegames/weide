@@ -22,10 +22,10 @@ async function get(path) {
   return r.json();
 }
 
-// Static snapshot (weide.py export-static, e.g. GitHub Pages): index.html sets window.WEIDE_STATIC and
-// every GET is a JSON file under data/ (relative, so the site works under any sub-path). Reactions then
-// only count in this browser (ui.js keeps the optimistic count).
-const STATIC = Boolean(window.WEIDE_STATIC);
+// Static snapshot (`weide export-static`, e.g. GitHub Pages): index.html sets window.APP_STATIC (older
+// exports: window.WEIDE_STATIC) and every GET is a JSON file under data/ (relative, so the site works
+// under any sub-path). Reactions then only count in this browser (ui.js keeps the optimistic count).
+const STATIC = Boolean(window.APP_STATIC ?? window.WEIDE_STATIC);
 let feedAll = null;
 
 const staticApi = {

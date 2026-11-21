@@ -2,6 +2,8 @@
 
 Intentional differences to the current data/ (documented, asserted below):
   * every post card gains `"generation": null` (legacy posts have no generation data).
+  * the app is renamed (config.APP_NAME / APP_TAGLINE): meta.json and index.html carry the new name,
+    and index.html sets the neutral `window.APP_STATIC` flag instead of `window.WEIDE_STATIC`.
 Everything else (file set, key sets, ids, slugs, values, index.html, static/, media files) is identical.
 """
 import json
@@ -10,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from weide import db
+from weide import config, db
 from weide.cli import main
 from weide.export_static import export_static, leak_check
 from weide.importer import import_public
@@ -19,6 +21,19 @@ from .conftest import REPO
 
 DATA = REPO / "data"
 INTENTIONAL_NEW_KEYS = {"generation"}
+LIVE_NAME, LIVE_TAGLINE = "Weide", "Das Netzwerk für Creator mit Auslauf"     # what the live site still shows
+
+
+def as_live(obj):
+    """Undo the intentional rename so the rest of an export can be compared with the live data/."""
+    if isinstance(obj, dict) and "app_name" in obj:
+        return {**obj, "app_name": LIVE_NAME, "tagline": LIVE_TAGLINE}
+    return obj
+
+
+def as_live_html(html: str) -> str:
+    return (html.replace(config.APP_NAME, LIVE_NAME).replace(config.APP_TAGLINE, LIVE_TAGLINE)
+            .replace("window.APP_STATIC", "window.WEIDE_STATIC"))
 
 
 def without(obj, keys):
@@ -74,7 +89,7 @@ def test_same_shape_and_values(exported):
         theirs = json.loads(f.read_text())
         assert keypaths(ours) - keypaths(theirs) <= {p for p in keypaths(ours) if p.rsplit(".", 1)[-1] in INTENTIONAL_NEW_KEYS}, rel
         assert keypaths(theirs) <= keypaths(ours), rel
-        assert without(ours, INTENTIONAL_NEW_KEYS) == theirs, rel
+        assert without(as_live(ours), INTENTIONAL_NEW_KEYS) == theirs, rel
 
 
 def test_generation_is_null_on_legacy_cards(exported):
@@ -85,7 +100,9 @@ def test_generation_is_null_on_legacy_cards(exported):
 
 def test_app_shell_and_media(exported):
     out, _, _ = exported
-    assert (out / "index.html").read_text() == (REPO / "index.html").read_text()
+    html = (out / "index.html").read_text()
+    assert f"<title>{config.APP_NAME}</title>" in html and "window.APP_STATIC = true" in html
+    assert as_live_html(html) == (REPO / "index.html").read_text()
     assert (out / ".nojekyll").is_file()
     for f in (REPO / "static").rglob("*"):
         if f.is_file():

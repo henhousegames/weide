@@ -3,7 +3,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from weide import db
+from weide import config, db
 from weide.importer import import_public
 from weide.server import create_app
 
@@ -32,7 +32,7 @@ def add_post(db_path, status, source, **kw):
 
 def test_meta(client):
     m = client.get("/api/meta").json()
-    assert m["app_name"] == "Weide" and m["today"] == "2026-11-17" and m["week"] == "2026-W47"
+    assert m["app_name"] == config.APP_NAME and m["today"] == "2026-11-17" and m["week"] == "2026-W47"
     assert m["posts"] == json.loads((DATA / "meta.json").read_text())["posts"]
 
 
@@ -124,5 +124,5 @@ def test_media_routes(client):
 
 def test_index_and_static(client):
     html = client.get("/").text
-    assert "<title>Weide</title>" in html and "{{" not in html
+    assert f"<title>{config.APP_NAME}</title>" in html and "{{" not in html
     assert client.get("/static/js/api.js").status_code == 200

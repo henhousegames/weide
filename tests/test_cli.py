@@ -16,4 +16,4 @@ def test_serve_runs_uvicorn(monkeypatch, db_path):
     seen = {}
     monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(app=app, **kw))
     cli.main(["serve", "--db", str(db_path), "--port", "9999"])
-    assert seen["port"] == 9999 and seen["host"] == "127.0.0.1" and seen["app"].title == "Weide"
+    assert seen["port"] == 9999 and seen["host"] == "127.0.0.1" and seen["app"].title == cli.config.APP_NAME

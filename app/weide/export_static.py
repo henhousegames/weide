@@ -3,7 +3,8 @@
 Every GET the frontend makes is answered once through the real FastAPI app (TestClient) and written
 as JSON under data/; media, posters and avatars are copied (or hard-linked) from the web-sized files;
 URLs are rewritten to relative paths so the site works under any sub-path. index.html sets
-`window.WEIDE_STATIC = true`, which makes static/js/api.js read these files.
+`window.APP_STATIC = true` (static/js/api.js also still honours the legacy `window.WEIDE_STATIC`), which
+makes static/js/api.js read these files.
 
 Only published posts are exported (the server hides everything else). Writer-facing fields stay out:
 file paths (media_path, raw moment video/poster), dev CLI hints (top `commands`, meta `cli`), moment
@@ -113,7 +114,7 @@ def render_index(static: bool = True) -> str:
     html = html.replace("{{APP_NAME}}", config.APP_NAME).replace("{{APP_TAGLINE}}", config.APP_TAGLINE)
     if static:
         html = html.replace('href="/static/', 'href="static/').replace('src="/static/', 'src="static/')
-        html = html.replace('<script type="module"', '<script>window.WEIDE_STATIC = true;</script>\n  <script type="module"', 1)
+        html = html.replace('<script type="module"', '<script>window.APP_STATIC = true;</script>\n  <script type="module"', 1)
     return html
 
 

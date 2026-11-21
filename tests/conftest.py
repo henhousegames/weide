@@ -6,7 +6,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 
 # never touch a real database from tests
-os.environ.setdefault("WEIDE_TODAY", "2026-11-17")
+os.environ.setdefault("HENHOUSE_TODAY", "2026-11-17")
 
 
 @pytest.fixture
