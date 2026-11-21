@@ -112,6 +112,11 @@ def test_preview_cards_show_short_model_labels(preview_client):
     assert pv["caption_is_fallback"] is True and pv["lab_url"].endswith(vid["lab_path"])
     assert by_gid["gen_f5d6526cb5374a54a4c2"]["preview"]["model"] == "FLUX.2 Klein 4B"
     assert by_gid["gen_f5d6526cb5374a54a4c2"]["caption"] == "FLUX.2 Klein 4B · 21.11.2026"
+    # start source: the live items' top-level field (one is "isaac-sim", the rest null)
+    assert all("start_source" in raw for raw in REVIEW["items"])
+    for raw in REVIEW["items"]:
+        assert by_gid[raw["id"]]["preview"]["start_source_sim"] is (raw["start_source"] == "isaac-sim")
+    assert any(raw["start_source"] == "isaac-sim" for raw in REVIEW["items"])
 
 
 # --- publish -> card -> export ---------------------------------------------------------------------------

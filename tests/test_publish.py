@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import shutil
+from pathlib import Path
 
 import httpx
 import pytest
@@ -524,44 +525,64 @@ def _record(con):
     return json.loads(con.execute("SELECT generation_json FROM posts WHERE public_id=?", (PID,)).fetchone()[0])
 
 
-def test_start_source_direct_label_on_item_reaches_card_and_gen(env, tmp_path):
+SIM_SUMMARY = json.loads((Path(__file__).parent / "fixtures/publication_summary.json").read_text(encoding="utf-8"))
+
+
+def _summary(**kw):
+    """A compose summary shaped like the service's API.md example (fixtures/publication_summary.json)."""
+    d = {k: v for k, v in SIM_SUMMARY.items() if k != "_note"}
+    return {**d, "public_id": PID, "character": "maehbot", "media": [], "links": {}, **kw}
+
+
+def test_start_source_summary_top_level_reaches_card_and_gen(env, tmp_path):
     con, svc, *_ = env
-    svc.pubs = [{**publication(), "labels": {"start_source": "isaac-sim"}}]
+    svc.summaries[PID] = _summary()
     assert run(con, svc)["new"] == 1
-    assert _record(con)["start_source_sim"] is True
+    rec = _record(con)
+    assert rec["start_source_sim"] is True and rec["start_source"] == "isaac-sim"   # the sanitizer keeps the value
     card_gen, gen = _export_gen(env, tmp_path)
-    assert card_gen == {"public_id": PID, "model_label": "Model X 1.0", "start_source_sim": True}
-    assert gen["start_source_sim"] is True
+    assert card_gen == {"public_id": PID, "model_label": "Compose", "start_source_sim": True}   # card: boolean only
+    assert gen["start_source_sim"] is True and gen["start_source"] == "isaac-sim"
 
 
-def test_start_source_parent_only_in_nested_compose(env, tmp_path):
+def test_start_source_segment_only(env, tmp_path):
     con, svc, *_ = env
-    svc.summaries[PID] = {**SUMMARY, "task": "compose", "labels": {"story": "h001"}, "composition": {"segments": [
-        {"segment": 1, "model": "Model X", "published": False},
-        {"segment": 2, "model": "Model Y", "parents": [
-            {"model": "Model Z", "labels": {"start_source": "isaac-sim", "note": "/home/EXAMPLE/scene.usd"}}]}]}}
+    svc.summaries[PID] = _summary(start_source=None)                 # only composition.segments[1] says so
     run(con, svc)
     card_gen, gen = _export_gen(env, tmp_path)
     assert card_gen["start_source_sim"] is True and gen["start_source_sim"] is True
-    assert "/home/" not in json.dumps(gen)
 
 
-@pytest.mark.parametrize("labels", [None, {}, {"start_source": "blender"}, {"start_source": "Isaac Sim"}])
-def test_start_source_absent_or_other_value_gives_no_note(env, tmp_path, labels):
+def test_start_source_null_gives_no_note(env, tmp_path):
+    con, svc, *_ = env
+    segs = [{**s, "start_source": None} for s in SIM_SUMMARY["composition"]["segments"]]
+    svc.summaries[PID] = _summary(start_source=None, composition={**SIM_SUMMARY["composition"], "segments": segs})
+    run(con, svc)
+    assert "start_source_sim" not in _record(con) and "start_source" not in _record(con)
+    card_gen, gen = _export_gen(env, tmp_path)
+    assert "start_source_sim" not in card_gen and "start_source_sim" not in gen
+
+
+@pytest.mark.parametrize("labels", [{"start_source": "isaac-sim"}, {"start_source": "blender"}, None])
+def test_start_source_labels_in_publications_are_ignored(env, tmp_path, labels):
     con, svc, *_ = env
     if labels is not None:
         svc.pubs = [{**publication(), "labels": labels}]
-        svc.summaries[PID] = {**SUMMARY, "labels": labels, "parents": [{"labels": labels}]}
+        svc.summaries[PID] = {**SUMMARY, "labels": labels, "parents": [{"labels": labels}],
+                              "composition": {"segments": [{"labels": labels, "parents": [{"labels": labels}]}]}}
     run(con, svc)
     assert "start_source_sim" not in _record(con)
     card_gen, gen = _export_gen(env, tmp_path)
     assert "start_source_sim" not in card_gen and "start_source_sim" not in gen
 
 
-def test_start_source_flag_is_dropped_when_label_goes_away(env):
+def test_start_source_flag_is_dropped_when_field_goes_away(env):
     con, svc, *_ = env
-    svc.pubs = [{**publication(), "labels": {"start_source": "isaac-sim"}}]
+    svc.summaries[PID] = _summary()
     run(con, svc)
+    assert _record(con)["start_source_sim"] is True
+    segs = [{**s, "start_source": None} for s in SIM_SUMMARY["composition"]["segments"]]
+    svc.summaries[PID] = _summary(start_source=None, composition={**SIM_SUMMARY["composition"], "segments": segs})
     svc.pubs = [{**publication(), "approved_at": "2026-11-18T17:00:00+00:00"}]
     assert run(con, svc, full=True)["updated"] == 1
     assert "start_source_sim" not in _record(con)

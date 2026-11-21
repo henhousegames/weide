@@ -1,5 +1,5 @@
 {
- "_note": "Trimmed copy of one live page of GET /api/v1/review/generations (2026-11-21), sanitized: 3 items, has_more set false.",
+ "_note": "Trimmed copies of live GET /api/v1/review/generations items (2026-11-21, after video-service 372c4c6 added the top-level start_source), sanitized: 5 items incl. one start_source \"isaac-sim\" (with the matching label) and one compose (start_source null), has_more set false.",
  "items": [
   {
    "id": "gen_f5d6526cb5374a54a4c2",
@@ -11,10 +11,12 @@
     "id": "flux2-klein-4b",
     "display_name": "FLUX.2 Klein 4B (text + reference to image)"
    },
+   "generated_with": "FLUX.2 Klein 4B",
    "labels": {
     "test": "flux-a",
     "approval": "owner 2026-11-21: okay, lets start our tests"
    },
+   "start_source": null,
    "prompt_original": "A photoreal anthropomorphic hen influencer with glossy chestnut-brown plumage, real hen anatomy, not plush, and a small bright red comb stands behind a wooden farmhouse kitchen counter and looks straight into the lens. Her wings are folded flat against her body, no hands visible. In the foreground on the counter, large and sharp: a ceramic bowl full of brown eggs and a steel whisk. Warm morning light from a window on the left, rustic shelves with jars behind her, plain walls, no signage, no text, no logos. Vertical portrait framing, medium shot from the chest up, eye level. No phone, tablet or tripod visible, nothing in front of her.",
    "output": {
     "mime": "image/png",
@@ -42,10 +44,12 @@
     "id": "ltx-2.5-distilled",
     "display_name": "LTX-2.5 22B distilled (I2V + joint audio)"
    },
+   "generated_with": "LTX-2.5",
    "labels": {
     "test": "ltx-a",
     "approval": "owner 2026-11-21: okay, lets start our tests"
    },
+   "start_source": null,
    "prompt_original": "The chestnut-brown hen behind the farmhouse kitchen counter looks straight into the lens and says immediately at the start, in a cheerful, slightly smug German voice: \"Leute, heute gibt's Rührei!\" While she speaks she gives one big whole-head nod toward the bowl of eggs, then looks back into the lens. One continuous shot: she stays in the same spot behind the counter the whole clip, wings folded, no hands visible, no other person or animal appears, only the hen speaks. Audio: her voice and a quiet kitchen room tone, no music. Static locked-off shot, the camera does not move, no zoom, no push-in.",
    "output": {
     "mime": "video/mp4",
@@ -73,6 +77,7 @@
     "id": "flux2-klein-4b",
     "display_name": "FLUX.2 Klein 4B (text + reference to image)"
    },
+   "generated_with": "FLUX.2 Klein 4B",
    "labels": {
     "character": "gustav",
     "story": "g1-test-01",
@@ -81,6 +86,7 @@
     "view": "front",
     "take": "1"
    },
+   "start_source": null,
    "prompt_original": "Full-body front view of Gustav, an original humanoid robot character: a slim, compact bipedal humanoid robot about 1.3 metres tall, generic industrial design, no logos, no text, no brand marks anywhere. Matte light-grey and silver body shells, black exposed joints with round disc-shaped actuator housings at the shoulders, elbows, hips and knees. A small rounded head with a smooth glossy black face visor, no mouth, no human face, a short black neck. Slim torso with a dark-grey chest plate, thin segmented arms, slim legs with large round knee actuators, small flat feet. Each hand is a three-fingered robotic hand: exactly one thumb and two fingers, matte dark grey, with visible joints, not a human hand. He stands upright in a neutral pose, feet hip-width apart and planted flat on the floor, arms hanging straight down at his sides, hands open and relaxed beside his thighs, visor facing the camera. Plain seamless light-grey studio background, soft even studio light, sharp focus, photoreal. No logos, no text, no signage. Vertical portrait framing, the whole robot from head to feet in frame, eye level.",
    "output": {
     "mime": "image/png",
@@ -97,8 +103,110 @@
    },
    "publication": null,
    "lab_path": "/#/g/gen_aad3e54035184c259c4c"
+  },
+  {
+   "id": "gen_7490c59e01ba4d31996b",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T19:24:06.536+00:00",
+   "finished_at": "2026-11-21T19:25:15.104+00:00",
+   "task": "i2v",
+   "model": {
+    "id": "ltx-2.5-distilled",
+    "display_name": "LTX-2.5 22B distilled (I2V + joint audio)"
+   },
+   "generated_with": "LTX-2.5",
+   "labels": {
+    "start_source": "isaac-sim",
+    "story": "h003",
+    "beat": "1",
+    "shot": "third",
+    "character": "hopfried",
+    "take": "1"
+   },
+   "start_source": "isaac-sim",
+   "prompt_original": "Immediately at the start Hopfried speaks in a long bored sigh, lets the bottle stand on the table and his whole upper body flops forward until his head and chest lie flat on the table between the bottles, one arm dangling down; he stays slumped there, in the same spot. The bottles stay standing, the crates stay still. Hopfried says in German, with a slow, bored, slightly metallic male robot voice: \"So langweilig…\" Vertical 9:16 photoreal footage in an old brewery hall, warm afternoon light, deadpan. Hopfried is a dark gunmetal-grey humanoid robot with three-digit grippers and a matte non-reflective black visor; he has no mouth, his voice comes from his head; he performs completely straight-faced. Each robot hand has exactly three digits, one thumb and two fingers, never a human hand, no skin. The black visor is matte and non-reflective, nothing and nobody is reflected in it. The robot's chest and back are plain and unmarked. No logos, brand marks, signs or new writing appear; bottle labels stay small and unchanged. The camera that films the shot is never visible. One continuous shot, no cut, no dissolve, no other person or animal appears. Static locked-off shot, the camera does not move or zoom.",
+   "output": {
+    "mime": "video/mp4",
+    "width": 704,
+    "height": 1280,
+    "fps": 24.0,
+    "duration_s": 5.042,
+    "has_audio": true,
+    "sha256": "8ec2f2fc9e63e202c11422fac09bc110401b8519305dca8790ad7079e2a7fdeb"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_7490c59e01ba4d31996b/media/output",
+    "poster": "/api/v1/review/generations/gen_7490c59e01ba4d31996b/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_7490c59e01ba4d31996b"
+  },
+  {
+   "compose": {
+    "parents": [
+     {
+      "id": "gen_3128acea6e0a45819641",
+      "model": "ltx-2.5-distilled",
+      "segment": 0,
+      "start": 0.0,
+      "end": 3.458333
+     },
+     {
+      "id": "gen_4eb98b141b6448af9080",
+      "model": "ltx-2.5-distilled",
+      "segment": 1,
+      "start": 3.458333,
+      "end": 6.625
+     },
+     {
+      "id": "gen_6f2b15d4df3b46dea612",
+      "model": "ltx-2.5-distilled",
+      "segment": 2,
+      "start": 6.625,
+      "end": 9.541667
+     },
+     {
+      "id": "gen_ef96ba70c7464bd996f1",
+      "model": "ltx-2.5-distilled",
+      "segment": 3,
+      "start": 9.541667,
+      "end": 12.875
+     }
+    ]
+   },
+   "id": "gen_c6790393b352406f9dee",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T19:25:57.600+00:00",
+   "finished_at": "2026-11-21T19:26:06.013+00:00",
+   "task": "compose",
+   "model": {
+    "id": "compose",
+    "display_name": "Compose (ffmpeg edit of finished generations)"
+   },
+   "generated_with": "LTX-2.5, geschnitten",
+   "labels": {
+    "story": "h001",
+    "shot": "edit"
+   },
+   "start_source": null,
+   "prompt_original": "",
+   "output": {
+    "mime": "video/mp4",
+    "width": 704,
+    "height": 1280,
+    "fps": 24.0,
+    "duration_s": 12.875,
+    "has_audio": true,
+    "sha256": "103f584ae84f4ef6e473be030211e2076e440602add3fb76341dffe8485dee37"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_c6790393b352406f9dee/media/output",
+    "poster": "/api/v1/review/generations/gen_c6790393b352406f9dee/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_c6790393b352406f9dee"
   }
  ],
- "next_since": "2026-11-21T17:35:12.784+00:00",
+ "next_since": "2026-11-21T19:26:06.013+00:00",
  "has_more": false
 }

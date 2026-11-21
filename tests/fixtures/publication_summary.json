@@ -1,0 +1,80 @@
+{
+ "_note": "The live GET /api/v1/publications was still empty on 2026-11-21 (no approvals), so this summary is built from the example in the service's API.md (GET /publications/{public_id}/summary, 'Publishing a compose', video-service 372c4c6): a compose whose top-level start_source is \"isaac-sim\" (inherited by the service) and whose composition.segments[] carry start_source per cut. Elided values filled in; the license URL is left out.",
+ "summary_version": 1,
+ "public_id": "pub_OOmZWSs4hgWgwvf5Ffoc",
+ "character": "hopfried",
+ "caption": "So langweilig",
+ "approved_at": "2026-11-21T19:30:00.000+00:00",
+ "generated_at": "2026-11-21T19:26:06.013+00:00",
+ "date": "2026-11-21",
+ "model": {
+  "id": "compose",
+  "display_name": "Compose (ffmpeg edit of finished generations)"
+ },
+ "generated_with": "LTX-2.5, geschnitten",
+ "start_source": "isaac-sim",
+ "task": "compose",
+ "seed": null,
+ "prompt": {
+  "original": "",
+  "effective": "",
+  "negative": ""
+ },
+ "composition": {
+  "segments": [
+   {
+    "segment": 0,
+    "model": "LTX-2.5",
+    "task": "i2v",
+    "in": 0.0,
+    "out": 3.458333,
+    "hold_end": 0.0,
+    "start": 0.0,
+    "end": 3.458333,
+    "crop": null,
+    "scaling": "lanczos",
+    "fps_conversion": null,
+    "published": false,
+    "start_source": null
+   },
+   {
+    "segment": 1,
+    "model": "LTX-2.5",
+    "task": "i2v",
+    "in": 0.0,
+    "out": 3.166667,
+    "hold_end": 0.0,
+    "start": 3.458333,
+    "end": 6.625,
+    "crop": null,
+    "scaling": "lanczos",
+    "fps_conversion": null,
+    "published": false,
+    "start_source": "isaac-sim"
+   }
+  ],
+  "audio": [],
+  "credits": [],
+  "seconds": 6.625
+ },
+ "parameters": {
+  "width": 704,
+  "height": 1280,
+  "fps": 24
+ },
+ "inputs": [],
+ "output": {
+  "sha256": "103f584ae84f4ef6e473be030211e2076e440602add3fb76341dffe8485dee37",
+  "mime": "video/mp4",
+  "size": 4200000,
+  "width": 704,
+  "height": 1280,
+  "fps": 24.0,
+  "frames": 159,
+  "duration_s": 6.625,
+  "has_audio": true
+ },
+ "notes": [
+  "Metrics are measured on this run; energy and cost are estimates."
+ ]
+}
