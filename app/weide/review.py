@@ -117,6 +117,7 @@ class ReviewItem:
     height: int | None = None
     duration_s: float | None = None
     has_audio: bool | None = None
+    fps: float | None = None
 
     @property
     def visible(self) -> bool:
@@ -147,7 +148,7 @@ class ReviewItem:
                    publication=Publication.parse(d.get("publication")),
                    lab_path=lab_path if lab_path and LAB_PATH.match(lab_path) else None,
                    width=_num(output.get("width"), int), height=_num(output.get("height"), int),
-                   duration_s=_num(output.get("duration_s"), float),
+                   duration_s=_num(output.get("duration_s"), float), fps=_num(output.get("fps"), float),
                    has_audio=output.get("has_audio") if isinstance(output.get("has_audio"), bool) else None)
 
 

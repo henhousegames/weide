@@ -42,6 +42,8 @@ export function avatar(account, size = 36, link = true) {
     : h("span", attrs, inner);
 }
 
+// Every visual post sits in the same 9:16 frame. Videos fill it; images keep their own shape
+// (object-fit: contain) over a blurred, dimmed copy of themselves, so any aspect ratio looks intended.
 export function media(post, { autoplay = true } = {}) {
   if (post.media_kind === "video") {
     const box = h("div", { class: "media media--video" });
@@ -56,8 +58,10 @@ export function media(post, { autoplay = true } = {}) {
     return box;
   }
   if (post.media_kind === "image") {
+    const src = post.media_url || post.poster_url;
     return h("div", { class: "media media--image" },
-      h("img", { src: post.poster_url || post.media_url, alt: post.caption ? `Bild: ${post.caption.slice(0, 80)}` : "Bild", loading: "lazy" }));
+      h("img", { class: "media__backdrop", src: post.poster_url || src, alt: "", "aria-hidden": "true", loading: "lazy" }),
+      h("img", { class: "media__img", src, alt: post.caption ? `Bild: ${post.caption.slice(0, 80)}` : "Bild", loading: "lazy" }));
   }
   return h("div", { class: "textpost" }, post.caption || "");
 }
@@ -83,9 +87,10 @@ function loadPressed(id) {
   return new Set(all);
 }
 
-export function reactionBar(post, { showComments = true } = {}) {
+// rail: the vertical action column on top of a feed card (emoji above the count, comments last)
+export function reactionBar(post, { showComments = true, rail = false } = {}) {
   const pressed = loadPressed(post.id);
-  const bar = h("div", { class: "reacts" });
+  const bar = h("div", { class: rail ? "reacts reacts--rail" : "reacts" });
   for (const r of state.meta?.reactions || []) {
     const count = h("span", {}, compact(post.reactions?.[r.key] || 0));
     const btn = h("button", {
@@ -110,7 +115,7 @@ export function reactionBar(post, { showComments = true } = {}) {
   }
   if (showComments) {
     bar.append(h("a", { class: "reacts__comments", href: `#/p/${post.id}`, "aria-label": `${post.comment_count} Kommentare` },
-      icons.comment(), num(post.comment_count)));
+      icons.comment(), rail ? h("span", {}, compact(post.comment_count || 0)) : num(post.comment_count)));
   }
   return bar;
 }
@@ -134,15 +139,31 @@ export function postHead(post) {
       h("div", { class: "post__meta" }, earTag(post.account), h("time", { class: "post__time", datetime: post.posted_at }, when(post.posted_at)))));
 }
 
+// Feed card. Visual posts: one 9:16 frame with author, caption and badge on a soft shade at the
+// bottom and the reactions as a column on the right (short-video feed). Text posts: a quote card.
 export function postCard(post) {
-  const long = (post.caption || "").length > 140;
   const n = post.comment_count || 0;
-  return h("article", { class: "post", "aria-label": `Post von ${post.account.display_name}` },
-    postHead(post),
-    media(post),
-    reactionBar(post, { showComments: false }),
-    post.kind === "text" ? (post.hashtags ? captionNode(post, false) : null) : captionNode(post, long),
-    genBadge(post),
-    h("a", { class: "post__more", href: `#/p/${post.id}` },
-      n ? [icons.comment(), plural(n, "Kommentar", "Kommentare")] : "Zum Post"));
+  const href = `#/p/${post.id}`;
+  const label = `Post von ${post.account.display_name}`;
+  if (post.kind === "text" || !post.media_kind) {
+    return h("article", { class: "post post--text", "data-post-id": String(post.id), "aria-label": label },
+      postHead(post),
+      media(post),
+      reactionBar(post, { showComments: false }),
+      post.hashtags ? captionNode(post, false) : null,
+      genBadge(post),
+      h("a", { class: "post__more", href }, n ? [icons.comment(), plural(n, "Kommentar", "Kommentare")] : "Zum Post"));
+  }
+  const cap = post.caption || post.hashtags
+    ? h("a", { class: "post__caption", href, "aria-label": `${label} öffnen` }, captionNode(post, true))
+    : null;
+  return h("article", { class: "post", "data-post-id": String(post.id), "aria-label": label },
+    h("div", { class: "post__frame" },
+      media(post),
+      post.media_kind === "image" ? h("a", { class: "post__open", href, "aria-label": `${label} öffnen` }) : null,
+      h("div", { class: "post__overlay" },
+        postHead(post),
+        cap,
+        genBadge(post)),
+      reactionBar(post, { showComments: true, rail: true })));
 }

@@ -306,7 +306,8 @@ def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request:
     posted_at = _when(it, state == "approved")
     model = model_short_label({"id": it.model, "display_name": it.model_label}) or "unbekanntes Modell"
     label_caption = it.labels.get("caption") if isinstance(it.labels.get("caption"), str) else None
-    caption = (pub.caption if pub else None) or label_caption or f"{model} · {parse_time(posted_at):%d.%m.%Y}"
+    own_caption = (pub.caption if pub else None) or label_caption
+    caption = own_caption or f"{model} · {parse_time(posted_at):%d.%m.%Y}"
     base = f"/preview/media/{quote(it.id, safe='')}"
     media_url = f"{base}/output" if it.output_url else None
     poster_url = f"{base}/poster" if it.poster_url else (media_url if it.output_kind == "image" else None)
@@ -320,7 +321,10 @@ def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request:
         "reactions": {t: 0 for t in config.REACTION_TYPES}, "comment_count": 0, "moment_count": 0, "score": 0,
         "account": account, "generation": None,
         "preview": {"state": state, "label": MARK_APPROVED if state == "approved" else MARK_DRAFT,
-                    "lab_url": lab_url(request, it.id, it.lab_path), "model": model, "task": it.task, "prompt": it.prompt},
+                    "lab_url": lab_url(request, it.id, it.lab_path), "model": model, "task": it.task, "prompt": it.prompt,
+                    "caption_is_fallback": not own_caption, "created_at": it.created_at, "finished_at": it.finished_at,
+                    "width": it.width, "height": it.height, "fps": it.fps, "duration_s": it.duration_s,
+                    "has_audio": it.has_audio},
     }
 
 

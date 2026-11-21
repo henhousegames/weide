@@ -103,6 +103,13 @@ def test_preview_cards_show_short_model_labels(preview_client):
         assert not any(b in json.dumps(card, ensure_ascii=False) for b in ("{'",)), card["caption"]
         detail = preview_client.get(f"/api/posts/{card['id']}").json()
         assert detail["preview"]["model"] == want
+    # draft detail facts come from the review item
+    vid = next(r for r in REVIEW["items"] if r["output"]["mime"].startswith("video/"))
+    pv = by_gid[vid["id"]]["preview"]
+    assert (pv["width"], pv["height"], pv["fps"], pv["duration_s"], pv["has_audio"]) == (
+        vid["output"]["width"], vid["output"]["height"], vid["output"]["fps"], vid["output"]["duration_s"], vid["output"]["has_audio"])
+    assert pv["created_at"] == vid["created_at"] and pv["prompt"] == vid["prompt_original"] and pv["task"] == vid["task"]
+    assert pv["caption_is_fallback"] is True and pv["lab_url"].endswith(vid["lab_path"])
     assert by_gid["gen_f5d6526cb5374a54a4c2"]["preview"]["model"] == "FLUX.2 Klein 4B"
     assert by_gid["gen_f5d6526cb5374a54a4c2"]["caption"] == "FLUX.2 Klein 4B · 21.11.2026"
 
