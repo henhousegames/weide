@@ -37,6 +37,14 @@ complete. After a fully successful pull, `next_since` is stored in the database 
 item fails, the cursor stays where it was and the item is fetched again next time. A fresh database
 (or `--full`) fetches the full list.
 
+Full pull (`--full`, or a database without a cursor): every publication is listed and its summary
+fetched again, so credits and licence notices the service recomputed reach already-imported posts
+(only changed records are written). It also re-applies revocations: ids in `revoked` are unpublished,
+and so is every published generation post that is no longer in the listing at all (skipped when the
+listing is empty or has an entry without a valid public_id). After a fully successful full pull the
+time is stored in the database meta (`last_full_pull_at`, next to the cursor); a failed one does not
+store it.
+
 Revocations (`revoked`) unpublish the post with that public_id: it goes back to draft and disappears
 from the API and the next export (the media file stays on disk, but the export removes it from the
 site). A later re-approval (same public_id, newer `approved_at`) publishes it again. Unknown ids are
@@ -52,15 +60,25 @@ Only `app/weide/publish.py` (`ServiceClient`, `Publication`) knows the API shape
 ## Build the site
 
 ```sh
-uv run weide deploy            # pull-approved -> export-static into site/ -> leak check
+uv run weide deploy                # pull-approved -> export-static into site/ -> leak check
+uv run weide deploy --full         # force a full pull (HENHOUSE_FULL_PULL=1 does the same)
+uv run weide deploy --incremental  # never a full pull this time (HENHOUSE_FULL_PULL=0)
 uv run weide deploy --skip-pull
 ```
+
+Daily full pull: by default the pull is incremental, but a full one when `last_full_pull_at` is
+missing or at least 24 h old (`app/weide/deploy.py`, `full_pull_due`). So `scripts/auto-deploy.sh`
+(every 12 min via `henhouse-deploy.timer`) does one full pull a day without a timer of its own; a
+failed full pull is retried on the next run. The JSON reports `pull.full`.
+`scripts/auto-deploy.sh --dry-run` runs `pull-approved --dry-run --auto-full` (same decision, writes
+nothing).
 
 The command prints JSON. `"changed": false` means `site/` is byte-identical to before, so automation
 can skip the commit. `errors` (pull failures, leak check hits) make it exit non-zero; then do not
 commit `site/`. Nothing is committed or pushed by the command. The exported "today" (ranking pages)
 is the date of the newest published post unless `--today` is given, so the same data exports to the
-same files on any day.
+same files on any day. The export holds no build timestamps, so a full pull that changes nothing leaves
+`site/` byte-identical and the automation commits nothing.
 
 Then review and commit `site/` and push to `main`.
 
