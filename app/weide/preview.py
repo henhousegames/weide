@@ -55,7 +55,7 @@ FULL_SYNC_EVERY = 30              # polls; a full refresh drops items the cursor
 PREVIEW_STATIC = Path(__file__).resolve().parent / "preview_static"
 ID_PREFIX = "vs-"
 STUDIO = {"slug": "studio-entwurf", "handle": "@studio.entwurf", "display_name": "Studio (Entwurf)",
-          "kind": "house", "avatar_url": None, "color": "#ffc928"}
+          "kind": "other", "avatar_url": None, "color": "#ffc928"}
 MARK_APPROVED = "FREIGEGEBEN – noch nicht live"
 MARK_DRAFT = "ENTWURF"
 PROXY_HEADERS = ("content-type", "content-encoding", "content-length", "content-range", "accept-ranges", "last-modified", "etag")

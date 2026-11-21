@@ -678,6 +678,7 @@ def test_login_posts_require_same_origin(henhouse_db, tmp_path, monkeypatch):
 def test_login_page_posts_fragment_nonce(app):
     html = TestClient(app).get("/login").text
     assert 'action="/login/link"' in html and "location.hash" in html and "preview-login-link" in html
+    assert "hashchange" in html          # also when the link is opened on an already open login page
 
 
 def test_cli_preview_login_link(tmp_path, capsys, private_config, monkeypatch):

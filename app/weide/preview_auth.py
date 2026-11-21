@@ -42,7 +42,8 @@ FAIL_PER_CLIENT = 5              # failed logins per client and window before 42
 FAIL_GLOBAL = 50                 # failed logins overall per window before 429
 FAIL_DELAY = 0.5                 # seconds added to every failed attempt
 OPEN_PATHS = {"/login", "/login/token", "/login/link"}
-SECURITY_HEADERS = {"X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"}
+# same-origin (not no-referrer): browsers then send a real Origin on the login POSTs (CSRF check)
+SECURITY_HEADERS = {"X-Frame-Options": "DENY", "Referrer-Policy": "same-origin", "X-Content-Type-Options": "nosniff"}
 
 
 class PreviewKeyError(Exception):
@@ -125,7 +126,7 @@ PAGE = """<!doctype html>
 <style>
 body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#173524;color:#eef3e6;
 font:16px/1.4 ui-sans-serif,system-ui,sans-serif}}
-.box{{width:min(92vw,380px);display:grid;gap:12px;padding:24px;border:1px solid #2f5a41;border-radius:16px}}
+.box{{box-sizing:border-box;width:min(92vw,380px);display:grid;gap:12px;padding:24px;border:1px solid #2f5a41;border-radius:16px}}
 h1{{margin:0;font-size:20px}} .tag{{display:inline-block;background:#ffc928;color:#1b1a12;border-radius:6px;
 padding:1px 8px;font-weight:700;font-size:13px;letter-spacing:.04em}}
 p{{margin:0}} code{{background:#0f2619;padding:1px 6px;border-radius:6px}}
@@ -142,14 +143,16 @@ LOGIN_BODY = """<p>Privat. Öffne die Preview über Tailscale von deinem eigenen
 Login-Link mit <code>weide preview-login-link</code>.</p>
 <form id="link" method="post" action="/login/link" hidden><input type="hidden" name="nonce"></form>
 <script>
-(function () {
+function useLink() {
   var m = /[#&]link=([A-Za-z0-9_-]+)/.exec(location.hash);
   if (!m) return;
   history.replaceState(null, "", "/login");
   var f = document.getElementById("link");
   f.nonce.value = m[1];
   f.submit();
-})();
+}
+useLink();
+window.addEventListener("hashchange", useLink);
 </script>"""
 
 TOKEN_BODY = """<form method="post" action="/login" autocomplete="off" style="display:grid;gap:12px">
