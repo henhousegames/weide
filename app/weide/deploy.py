@@ -3,10 +3,18 @@
 Purely local: nothing is committed or pushed. The result says whether the site directory changed, so
 automation can skip no-op deploys (`"changed": false`). A pull failure stops before the export; a leak
 check hit is an error (the files are written, but must not be committed).
+
+Daily full pull: the pull is incremental (cursor), except once per FULL_PULL_INTERVAL: when the DB meta
+`last_full_pull_at` (written by pull_approved after a fully successful full listing) is missing, unreadable
+or older than that, the pull is a full one (re-fetches every publication and its summary, so changed
+credits reach existing posts, and unpublishes posts that vanished from the service). `full=True/False`
+forces either way; the CLI maps `--full` / `--incremental` and HENHOUSE_FULL_PULL=1|0 onto it.
+A full pull that changes nothing gives a byte-identical site (`"changed": false`).
 """
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -34,7 +42,29 @@ def diff(before: dict[str, str], after: dict[str, str]) -> dict[str, list[str]]:
             "modified": sorted(k for k in before.keys() & after.keys() if before[k] != after[k])}
 
 
-def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, full: bool = False, today: str | None = None,
+FULL_PULL_INTERVAL = timedelta(hours=24)
+
+
+def full_pull_due(con, now: datetime | None = None, interval: timedelta = FULL_PULL_INTERVAL) -> bool:
+    """True when the last successful full listing is missing, unreadable, in the future or >= interval old."""
+    from . import config
+    from .db import get_meta, parse_time
+    from .publish import LAST_FULL_KEY
+
+    last = get_meta(con, LAST_FULL_KEY)
+    try:
+        last_dt = parse_time(last) if isinstance(last, str) and last else None
+    except ValueError:
+        last_dt = None
+    if last_dt is None:
+        return True
+    now = now or datetime.now(config.TZ)
+    age = now - last_dt
+    return age >= interval or age < timedelta(0)
+
+
+def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, full: bool | None = None,
+           today: str | None = None,
            settings=None, transport=None, log: Callable[[str], None] = lambda s: None) -> dict:
     from .db import connect
     from .publish import ServiceSettings, pull_approved
@@ -46,6 +76,8 @@ def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, 
         settings = settings or ServiceSettings.load()
         con = connect(db_path)
         try:
+            if full is None:
+                full = full_pull_due(con)
             res["pull"] = pull_approved(con, settings, full=full, transport=transport, log=log)
         finally:
             con.close()

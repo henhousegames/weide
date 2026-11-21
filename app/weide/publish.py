@@ -18,6 +18,15 @@ revocation. After a fully successful (non-dry) pull `next_since` is stored in th
 (`publications_since`) and the next pull asks only for changes after it. Any failed item keeps the old
 cursor, so the item is fetched again next time; `--full` ignores the cursor (full reconcile).
 
+Full listing (`--full`, or no cursor yet): every active publication is fetched again, including its
+summary (credits and licence notices are computed by the service at summary time, so they can change),
+and already-imported posts are updated when their record changed. Revoked ids are unpublished as usual,
+and so is every published generation post whose public_id is in neither list any more (it vanished from
+the service). That last step is skipped when the listing is empty or contains an entry without a valid
+public_id (a broken listing must not unpublish everything). After a fully successful non-dry full
+listing the time is stored in the DB meta (`last_full_pull_at`); `weide deploy` uses it to run one full
+pull per day (deploy.full_pull_due). A failed run leaves it alone, so the full pull is retried.
+
 Relative URLs are resolved against the base URL. The bearer key is only sent to the service's own
 origin (media URLs on another host get no key) and is never printed: every error text goes through
 `_redact`. Settings come from the environment or from a gitignored `.env` in the private dir:
@@ -73,6 +82,7 @@ from .generation import (CREDITS_KEY, PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_
 
 PUBLICATIONS_PATH = "/api/v1/publications"
 CURSOR_KEY = "publications_since"  # meta key: next_since of the last fully successful pull
+LAST_FULL_KEY = "last_full_pull_at"  # meta key: time of the last fully successful full listing
 MAX_PAGES = 1000
 # mime -> (post kind, file extension)
 MEDIA_TYPES = {"video/mp4": ("reel", ".mp4"), "image/png": ("image", ".png"), "image/jpeg": ("image", ".jpg"),
@@ -545,12 +555,31 @@ def _merge(raw_pubs: list[Any], raw_revoked: list[Any], fail: Callable[[str], No
     return sorted(pubs.values(), key=lambda t: t[0]), revoked
 
 
+def _missing(con: sqlite3.Connection, raw_pubs: list[Any], revoked: dict[str, str | None]) -> list[str] | None:
+    """Published generation posts whose public_id a full listing no longer mentions (neither active nor
+    revoked), oldest first. None when the listing cannot be trusted for this (empty, or an entry without
+    a valid public_id)."""
+    listed: set[str] = set(revoked)
+    for d in raw_pubs:
+        pid = d.get("public_id") if isinstance(d, dict) else None
+        if not isinstance(pid, str) or not PUBLIC_ID.match(pid):
+            return None
+        listed.add(pid)
+    if not listed:
+        return None
+    rows = con.execute("SELECT public_id FROM posts WHERE status='published' AND source LIKE 'generation:%' "
+                       "AND public_id IS NOT NULL ORDER BY id").fetchall()
+    return [r[0] for r in rows if r[0] not in listed]
+
+
 def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run: bool = False, full: bool = False,
                   transport: httpx.BaseTransport | None = None, media_root: Path | None = None,
                   thumb_root: Path | None = None, log: Callable[[str], None] = lambda s: None) -> dict:
     """Publish every approved publication and unpublish every revoked one (since the stored cursor,
     or all of them with `full` / without a cursor).
-    Returns {new, updated, unchanged, revoked, skipped, failed: [...], notes: [...], items: [...], incremental}.
+    Returns {new, updated, unchanged, revoked, skipped, failed: [...], notes: [...], items: [...], incremental, full}.
+    A full listing also unpublishes published generation posts missing from it (see _missing) and,
+    when nothing failed (and not dry_run), stores its time as LAST_FULL_KEY.
     Audio-only publications are skipped (counted in `skipped`, logged, no post).
     Items are independent: one failure does not block the others (but makes `failed` non-empty and
     keeps the cursor where it was)."""
@@ -560,7 +589,7 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
     since = since if isinstance(since, str) and since else None
     client = ServiceClient(settings, transport)
     res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "skipped": 0, "failed": [], "notes": [],
-                           "items": [], "dry_run": dry_run, "incremental": since is not None}
+                           "items": [], "dry_run": dry_run, "incremental": since is not None, "full": since is None}
 
     def fail(msg: str) -> None:
         msg = _redact(msg, settings.key)
@@ -598,7 +627,17 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
             res["items"].append({"public_id": pub.public_id, "kind": pub.kind, "status": status,
                                  **({"poster": poster} if status != "unchanged" and not dry_run else {})})
             log(f"{status} {pub.public_id}")
-        for pid, at in revoked.items():
+        revoke_list = list(revoked.items())
+        if since is None:
+            missing = _missing(con, raw_pubs, revoked)
+            if missing is None:
+                res["notes"].append("full listing is empty or has entries without a valid public_id; "
+                                    "posts missing from it were not unpublished")
+            else:
+                for pid in missing:
+                    res["notes"].append(f"{pid}: missing from the full listing, unpublished")
+                    revoke_list.append((pid, None))
+        for pid, at in revoke_list:
             try:
                 r = _revoke(con, pid, at, dry_run=dry_run)
             except sqlite3.Error as e:
@@ -611,8 +650,11 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                 res["revoked"] += 1
                 res["items"].append({"public_id": pid, "status": "revoked"})
                 log(f"revoked {pid}")
-        if not dry_run and not res["failed"] and cursor and cursor != since:
-            set_meta(con, CURSOR_KEY, cursor)
+        if not dry_run and not res["failed"]:
+            if cursor and cursor != since:
+                set_meta(con, CURSOR_KEY, cursor)
+            if since is None:
+                set_meta(con, LAST_FULL_KEY, now_iso())
             con.commit()
     finally:
         client.close()
