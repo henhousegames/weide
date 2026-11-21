@@ -113,7 +113,7 @@ def test_unpublished_and_private_data_stay_out(exported, tmp_path):
     gen = db.upsert_post(con, account_id=lisa, kind="text", caption="Neu hier",
                          posted_at="2026-11-17T21:10:00+01:00", source="generation:run-0042", status="published",
                          public_id="g1a2b3", generation={"model_label": "Model X 1.0", "seed": 7,
-                                                         "workflow_path": "/home/someone/wf.json"})
+                                                         "workflow_path": "/home/EXAMPLE/wf.json"})
     story = db.upsert_post(con, account_id=lisa, kind="story", caption="Story", media="e001-v3/out/single/05-lisa-mukbang.mp4",
                            posted_at="2026-11-17T22:00:00+01:00", source="story:test", status="published", funny_score=20)
     db.upsert_post(con, account_id=lisa, parent_id=story, kind="reel", caption="Beat", clip_id="beat-1",
@@ -121,7 +121,7 @@ def test_unpublished_and_private_data_stay_out(exported, tmp_path):
                    source="story:test:beat-1", status="published", funny_score=21, why="story:test:beat-1")
     con.execute("INSERT INTO characters (account_id, kind, identity, style_guidance) VALUES (?,?,?,?)",
                 (lisa, "animal", "Kuh", "PRIVATE-STYLE-GUIDANCE"))
-    con.execute("INSERT INTO controllers (name, type, key_hash, permissions) VALUES ('bot','agent','HASHVALUE','[]')")
+    con.execute("INSERT INTO controllers (name, type, key_hash, permissions) VALUES ('bot','agent','EXAMPLE_KEY_HASH','[]')")
     con.commit()
     con.close()
     out = tmp_path / "site"
@@ -133,7 +133,7 @@ def test_unpublished_and_private_data_stay_out(exported, tmp_path):
     assert not (out / "data/posts/999.json").exists()
     blob = "\n".join(f.read_text() for f in (out / "data").rglob("*.json"))
     for s in ("DRAFT-SECRET-CAPTION", "APPROVED-NOT-YET", "generation:run-0042", "PRIVATE-STYLE-GUIDANCE",
-              "HASHVALUE", "/home/", "/Users/", "workflow_path", "\"seed\":", "media_path"):
+              "EXAMPLE_KEY_HASH", "/home/", "/Users/", "workflow_path", "\"seed\":", "media_path"):
         assert s not in blob, s
     card = json.loads((out / f"data/posts/{gen}.json").read_text())
     assert card["generation"] == {"public_id": "g1a2b3", "model_label": "Model X 1.0"}
@@ -149,8 +149,8 @@ def test_unpublished_and_private_data_stay_out(exported, tmp_path):
 def test_leak_check_finds_planted_leaks(tmp_path):
     (tmp_path / "data").mkdir()
     (tmp_path / "data/feed.json").write_text(json.dumps({"items": [
-        {"media_url": "/home/user/x.mp4", "caption": "api_token=abc", "source": "generation:run-1",
-         "media_path": "x", "moments": [{"video": "e/x.mp4"}], "why": "C:\\Users\\x"}]}))
+        {"media_url": "/home/EXAMPLE/x.mp4", "caption": "api_token=EXAMPLE_TOKEN", "source": "generation:run-1",
+         "media_path": "x", "moments": [{"video": "e/x.mp4"}], "why": "C:\\Users\\EXAMPLE"}]}))
     hits = "\n".join(leak_check(tmp_path))
     for s in ("absolute path", "secret-like", "generation run id", "media_path", "moment 'video'"):
         assert s in hits, s
