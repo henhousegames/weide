@@ -34,7 +34,7 @@ def diff(before: dict[str, str], after: dict[str, str]) -> dict[str, list[str]]:
             "modified": sorted(k for k in before.keys() & after.keys() if before[k] != after[k])}
 
 
-def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, today: str | None = None,
+def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, full: bool = False, today: str | None = None,
            settings=None, transport=None, log: Callable[[str], None] = lambda s: None) -> dict:
     from .db import connect
     from .publish import ServiceSettings, pull_approved
@@ -46,7 +46,7 @@ def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, 
         settings = settings or ServiceSettings.load()
         con = connect(db_path)
         try:
-            res["pull"] = pull_approved(con, settings, transport=transport, log=log)
+            res["pull"] = pull_approved(con, settings, full=full, transport=transport, log=log)
         finally:
             con.close()
         if res["pull"]["failed"]:

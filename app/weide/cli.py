@@ -109,7 +109,7 @@ def cmd_pull_approved(a: argparse.Namespace) -> None:
         _die(str(e))
     con = connect(a.db)
     try:
-        res = pull_approved(con, settings, dry_run=a.dry_run, log=lambda s: print(s, file=sys.stderr))
+        res = pull_approved(con, settings, dry_run=a.dry_run, full=a.full, log=lambda s: print(s, file=sys.stderr))
     finally:
         con.close()
     print(json.dumps(res, ensure_ascii=False))
@@ -121,7 +121,7 @@ def cmd_deploy(a: argparse.Namespace) -> None:
     from .deploy import deploy
     from .publish import PublishError
     try:
-        res = deploy(Path(a.site), a.db, pull=not a.skip_pull, today=a.today,
+        res = deploy(Path(a.site), a.db, pull=not a.skip_pull, full=a.full, today=a.today,
                      log=lambda s: print(s, file=sys.stderr))
     except PublishError as e:
         _die(str(e))
@@ -170,12 +170,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("pull-approved", help="publish the generations approved in the generation service; idempotent")
     s.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
+    s.add_argument("--full", action="store_true", help="ignore the stored cursor and reconcile every publication")
     _db_arg(s)
     s.set_defaults(fn=cmd_pull_approved)
 
     s = sub.add_parser("deploy", help="pull-approved, export-static into a site dir, leak check, report changes (no git)")
     s.add_argument("site", nargs="?", default="site", help="site directory (default: site)")
     s.add_argument("--skip-pull", action="store_true", help="only re-export the current database")
+    s.add_argument("--full", action="store_true", help="pull: ignore the stored cursor and reconcile every publication")
     s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages (default: date of the newest published post)")
     _db_arg(s)
     s.set_defaults(fn=cmd_deploy)

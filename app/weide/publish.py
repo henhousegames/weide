@@ -1,32 +1,45 @@
-"""`weide pull-approved`: fetch generations approved in the generation service and publish them as posts.
+"""`weide pull-approved`: fetch publications approved in the generation service and publish them as posts.
 
-The service's publish API is not final yet, so everything that knows its shape lives in `ServiceClient`
-(one small adapter). Assumed shape (read-only key with scope `publish`):
+Everything that knows the service's publish API ("Publishing" in the service's docs/API.md) lives in
+`ServiceClient` and `Publication`. A key with scope `publish` reads:
 
-  GET {base}/api/v1/publish/approved
-      -> {"items": [{public_id, run_id, character_slug, caption, title?, approved_at,
-                     media_url, poster_url?, summary_url, sha256?, status?}],
-          "revoked": [{public_id, revoked_at}]}
-      An item with status "revoked" counts like an entry in `revoked`.
-  GET summary_url  -> public generation summary JSON (sanitized by the service; we sanitize again)
-  GET media_url    -> the final video (streamed to disk; Content-Length and sha256 verified when given)
+  GET {base}/api/v1/publications[?since=<ISO>]
+      -> {publications: [{public_id, character, caption, approved_at, task, model{id, display_name},
+                          sha256, mime, video_url | image_url, poster_url, media[], links{summary}}],
+          revoked: [{public_id, revoked_at}], since, next_since}
+      Without `since`: every active publication and every revoked one. With `since`: approvals (and
+      caption updates, same public_id, newer approved_at) and revocations after that time. We follow
+      `next_since` until a page comes back empty.
+  GET {base}/api/v1/publications/{public_id}/summary      sanitized by the service; we sanitize again
+  GET {base}/api/v1/publications/{public_id}/media/{output|poster|input-N}
+
+Cursor: API.md defines `revoked` as the withdrawals after `since`, so incremental polling sees every
+revocation. After a fully successful (non-dry) pull `next_since` is stored in the DB meta
+(`publications_since`) and the next pull asks only for changes after it. Any failed item keeps the old
+cursor, so the item is fetched again next time; `--full` ignores the cursor (full reconcile).
 
 Relative URLs are resolved against the base URL. The bearer key is only sent to the service's own
-origin (signed media URLs on another host get no key) and is never printed: every error text goes
-through `_redact`. Settings come from the environment or from a gitignored `.env` in the private dir:
-  HENHOUSE_SERVICE_URL   base URL of the service
+origin (media URLs on another host get no key) and is never printed: every error text goes through
+`_redact`. Settings come from the environment or from a gitignored `.env` in the private dir:
+  HENHOUSE_SERVICE_URL   base URL of the service (scheme://host:port; a trailing /api/v1 is fine too)
   HENHOUSE_SERVICE_KEY   bearer key (scope `publish`)
 
-Each item becomes one post (kind reel, status published: approval happened in the service) matched by
-source `generation:<run_id>`, so a rerun never duplicates; caption/title/summary changes update it.
-The character account must already exist. Media go to <media root>/gen/<public_id>.mp4, a 540 px
-poster to <thumb root>/540/gen/<public_id>.jpg: the service poster (scaled with ffmpeg, or kept as is
-when it is a JPEG and ffmpeg is missing), else a frame of the video (ffmpeg; skipped without it).
+Each publication becomes one post (status published: approval happened in the service) matched by
+source `generation:<public_id>` (the API exposes no run id, and the internal run id never reaches us),
+so a rerun never duplicates; caption/character/summary changes update it (keeping the first posted_at).
+`video/mp4` becomes a `reel`, `image/png|jpeg|webp` an `image` post. The character account must already
+exist. Media go to <media root>/gen/<public_id>.<ext> (sha256 from the list verified), a 540 px poster to
+<thumb root>/540/gen/<public_id>.jpg: the service poster (scaled with ffmpeg, or kept as is when it is a
+JPEG and ffmpeg is missing), else a frame of the media (ffmpeg; skipped without it).
+Inputs: only inputs the summary marks `published: true` with a `source_public_id` are kept, as a
+reference to that publication's own post (shown at export only if that post is published here);
+every other input is a "privater Input". Input media are not downloaded (they are posts of their own).
 Every item is validated on its own, fetched into a temp dir and written in one DB transaction; a failed
 item leaves no post and no file behind and does not stop the others.
 
 Revoked public_ids are unpublished: the post goes back to status draft (meta `revoked_at` notes why), so
-it vanishes from the API and the export; the media file stays on disk. Unknown ids are a no-op.
+it vanishes from the API and the export; the media file stays on disk. Unknown ids are a no-op. When an
+id is both approved and revoked in one pull, the later timestamp wins (revoked on a tie or bad time).
 """
 from __future__ import annotations
 
@@ -44,10 +57,15 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from . import config
-from .db import jdump, jload, now_iso, parse_time, upsert_post
-from .generation import PUBLIC_ID, REDACTED, sanitize
+from .db import get_meta, jdump, jload, now_iso, parse_time, set_meta, upsert_post
+from .generation import PRIVATE_INPUT, PUBLIC_ID, REDACTED, sanitize
 
-APPROVED_PATH = "/api/v1/publish/approved"
+PUBLICATIONS_PATH = "/api/v1/publications"
+CURSOR_KEY = "publications_since"  # meta key: next_since of the last fully successful pull
+MAX_PAGES = 1000
+# mime -> (post kind, file extension)
+MEDIA_TYPES = {"video/mp4": ("reel", ".mp4"), "image/png": ("image", ".png"), "image/jpeg": ("image", ".jpg"),
+               "image/webp": ("image", ".webp")}
 MAX_MEDIA_BYTES = 1 << 30          # 1 GiB: a web-size reel is far below this
 POSTER_WIDTH = 540
 
@@ -98,42 +116,62 @@ class ServiceSettings:
 
 # --- service adapter -------------------------------------------------------------------------------
 
+def _sha_ok(sha: Any) -> bool:
+    return isinstance(sha, str) and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha.lower())
+
+
 @dataclass
-class ApprovedItem:
+class Publication:
     public_id: str
-    run_id: str
-    character_slug: str
+    character: str
     caption: str
     approved_at: str
+    mime: str
+    sha256: str
     media_url: str
     summary_url: str
-    title: str | None = None
     poster_url: str | None = None
-    sha256: str | None = None
+
+    @property
+    def kind(self) -> str:
+        return MEDIA_TYPES[self.mime][0]
+
+    @property
+    def ext(self) -> str:
+        return MEDIA_TYPES[self.mime][1]
 
     @classmethod
-    def parse(cls, d: Any) -> "ApprovedItem":
+    def parse(cls, d: Any) -> "Publication":
         if not isinstance(d, dict):
-            raise PublishError("approved item is not an object")
-        missing = [k for k in ("public_id", "run_id", "character_slug", "approved_at", "media_url", "summary_url")
-                   if not d.get(k)]
+            raise PublishError("publication is not an object")
+        missing = [k for k in ("public_id", "character", "approved_at", "mime", "sha256") if not d.get(k)]
         if missing:
-            raise PublishError(f"approved item {d.get('public_id')!r} lacks {', '.join(missing)}")
-        if not PUBLIC_ID.match(str(d["public_id"])):
-            raise PublishError("approved item has an invalid public_id")
-        sha = d.get("sha256")
-        if sha is not None and not (isinstance(sha, str) and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha.lower())):
-            raise PublishError(f"{d['public_id']}: invalid sha256")
-        return cls(public_id=str(d["public_id"]), run_id=str(d["run_id"]), character_slug=str(d["character_slug"]),
-                   caption=str(d.get("caption") or ""), approved_at=str(d["approved_at"]),
-                   media_url=str(d["media_url"]), summary_url=str(d["summary_url"]),
-                   title=(str(d["title"]) if d.get("title") else None),
-                   poster_url=(str(d["poster_url"]) if d.get("poster_url") else None),
-                   sha256=(sha.lower() if sha else None))
+            raise PublishError(f"publication {str(d.get('public_id'))[:64]!r} lacks {', '.join(missing)}")
+        pid = str(d["public_id"])
+        if not PUBLIC_ID.match(pid):
+            raise PublishError("publication has an invalid public_id")
+        mime = str(d["mime"]).split(";", 1)[0].strip().lower()
+        if mime not in MEDIA_TYPES:
+            raise PublishError(f"{pid}: unsupported mime {mime[:40]!r}")
+        url = d.get("video_url") if MEDIA_TYPES[mime][0] == "reel" else d.get("image_url")
+        if not url or not isinstance(url, str):
+            raise PublishError(f"{pid}: no {'video_url' if MEDIA_TYPES[mime][0] == 'reel' else 'image_url'}")
+        if not _sha_ok(d["sha256"]):
+            raise PublishError(f"{pid}: invalid sha256")
+        try:
+            parse_time(d["approved_at"])
+        except ValueError:
+            raise PublishError(f"{pid}: invalid approved_at") from None
+        links = d.get("links") if isinstance(d.get("links"), dict) else {}
+        summary = links.get("summary") if isinstance(links.get("summary"), str) else None
+        return cls(public_id=pid, character=str(d["character"]), caption=str(d.get("caption") or ""),
+                   approved_at=str(d["approved_at"]), mime=mime, sha256=str(d["sha256"]).lower(), media_url=url,
+                   summary_url=summary or f"{PUBLICATIONS_PATH}/{pid}/summary",
+                   poster_url=(str(d["poster_url"]) if d.get("poster_url") else None))
 
 
 class ServiceClient:
-    """The only code that knows the service's publish API (adapt here when it is final)."""
+    """The only code that talks to the service's publish API."""
 
     def __init__(self, settings: ServiceSettings, transport: httpx.BaseTransport | None = None, timeout: float = 60):
         self.settings = settings
@@ -148,7 +186,7 @@ class ServiceClient:
 
     def _headers(self, url: str) -> dict[str, str]:
         h = {"Accept": "application/json"}
-        if _origin(url) == self.origin:            # signed URLs elsewhere get no key
+        if _origin(url) == self.origin:            # URLs elsewhere get no key
             h["Authorization"] = f"Bearer {self.settings.key}"
         return h
 
@@ -161,10 +199,10 @@ class ServiceClient:
             pass
         return PublishError(f"{what}: HTTP {r.status_code}{detail}")
 
-    def get_json(self, url: str, what: str) -> Any:
+    def get_json(self, url: str, what: str, params: dict[str, str] | None = None) -> Any:
         url = self.url(url)
         try:
-            r = self.http.get(url, headers=self._headers(url))
+            r = self.http.get(url, params=params, headers=self._headers(url))
         except httpx.HTTPError as e:
             raise PublishError(f"{what}: {type(e).__name__}") from None
         if r.status_code != 200:
@@ -174,21 +212,39 @@ class ServiceClient:
         except ValueError:
             raise PublishError(f"{what}: not JSON") from None
 
-    def approved(self) -> tuple[list[Any], list[Any]]:
-        """(raw items, raw revocations); items are validated one by one by the caller."""
-        data = self.get_json(APPROVED_PATH, "approved list")
-        items = data.get("items") if isinstance(data, dict) else None
-        if not isinstance(items, list):
-            raise PublishError("approved list: no items array")
-        revoked = data.get("revoked") or []
-        if not isinstance(revoked, list):
-            raise PublishError("approved list: revoked is not an array")
-        return items, revoked
+    def publications(self, since: str | None = None) -> tuple[list[Any], list[Any], str | None]:
+        """(raw publications, raw revocations, cursor) for everything after `since` (all without it),
+        following `next_since` until a page is empty. Items are validated one by one by the caller."""
+        pubs: list[Any] = []
+        revoked: list[Any] = []
+        cursor = since
+        for _ in range(MAX_PAGES):
+            data = self.get_json(PUBLICATIONS_PATH, "publications", {"since": cursor} if cursor else None)
+            if not isinstance(data, dict) or not isinstance(data.get("publications"), list):
+                raise PublishError("publications: no publications array")
+            page_p, page_r = data["publications"], data.get("revoked") or []
+            if not isinstance(page_r, list):
+                raise PublishError("publications: revoked is not an array")
+            pubs += page_p
+            revoked += page_r
+            nxt = data.get("next_since")
+            nxt = nxt if isinstance(nxt, str) and nxt else None
+            if nxt is not None:
+                try:
+                    parse_time(nxt)
+                except ValueError:
+                    raise PublishError("publications: invalid next_since") from None
+            if not (page_p or page_r):
+                return pubs, revoked, nxt or cursor
+            if nxt is None or nxt == cursor:
+                return pubs, revoked, None       # no usable cursor: the next pull is a full one
+            cursor = nxt
+        raise PublishError(f"publications: still not exhausted after {MAX_PAGES} pages")
 
-    def summary(self, item: ApprovedItem) -> dict:
-        s = self.get_json(item.summary_url, f"{item.public_id}: summary")
+    def summary(self, pub: Publication) -> dict:
+        s = self.get_json(pub.summary_url, f"{pub.public_id}: summary")
         if not isinstance(s, dict):
-            raise PublishError(f"{item.public_id}: summary is not an object")
+            raise PublishError(f"{pub.public_id}: summary is not an object")
         return s
 
     def download(self, url: str, dest: Path, what: str, sha256: str | None = None) -> None:
@@ -233,42 +289,52 @@ def _redact(text: str, *secrets: str) -> str:
     return text
 
 
-def _scrub(obj: Any, needles: tuple[str, ...]) -> Any:
-    """Drop every string that mentions one of `needles` (the run id) from a summary."""
-    if isinstance(obj, dict):
-        out = {}
-        for k, v in obj.items():
-            if any(n in str(k) for n in needles):
-                continue
-            v = _scrub(v, needles)
-            if v is not None:
-                out[k] = v
-        return out
-    if isinstance(obj, list):
-        return [x for x in (_scrub(v, needles) for v in obj) if x is not None]
-    if isinstance(obj, str) and any(n in obj for n in needles):
-        return None
-    return obj
+SUMMARY_DROP = ("public_id", "post_id", "id", "media", "links", "summary_version")
+INPUT_KEEP = ("label", "role", "position", "strength", "frame_idx", "at_seconds")
 
 
-def public_record(summary: dict, item: ApprovedItem) -> dict:
-    """generation_json for the post: the summary sanitized again, ids that belong elsewhere removed,
-    the run id scrubbed wherever it appears, model_label filled from the model when missing."""
-    s = sanitize({k: v for k, v in summary.items() if k not in ("public_id", "post_id", "id")}) or {}
-    s = _scrub(s, (item.run_id,)) if len(item.run_id) >= 4 else s
+def _input(x: Any) -> dict:
+    """A summary input: a reference to its own publication when the service marks it published,
+    else a private input (role kept). Hashes and media URLs are not stored."""
+    d = x if isinstance(x, dict) else {}
+    spid = d.get("source_public_id")
+    if d.get("published") is True and isinstance(spid, str) and PUBLIC_ID.match(spid):
+        return {**(sanitize({k: d.get(k) for k in INPUT_KEEP}) or {}), "public_id": spid}
+    role = sanitize(d.get("role")) if isinstance(d.get("role"), str) else None
+    return {**({"role": role} if role else {}), "private": True, "label": PRIVATE_INPUT}
+
+
+def public_record(summary: dict, pub: Publication) -> dict:
+    """generation_json for the post: the service summary sanitized again, ids/URLs that belong to the
+    service removed, inputs reduced to public references, model_label filled from the model."""
+    inputs = summary.get("inputs")
+    s = sanitize({k: v for k, v in summary.items() if k not in SUMMARY_DROP and k != "inputs"}) or {}
+    if inputs is not None:
+        s["inputs"] = [_input(x) for x in (inputs if isinstance(inputs, list) else [inputs])]
     if not s.get("model_label"):
         m = s.get("model")
-        name = m.get("name") if isinstance(m, dict) else m if isinstance(m, str) else None
-        ver = (m.get("version") if isinstance(m, dict) else None) or s.get("version")
+        if isinstance(m, dict):
+            name = m.get("display_name") or m.get("name") or m.get("id")
+            ver = None if m.get("display_name") else m.get("version")
+        else:
+            name, ver = (m if isinstance(m, str) else None), None
         if name:
             s["model_label"] = f"{name} {ver}".strip() if ver else str(name)
     return s
 
 
-def _is_mp4(path: Path) -> bool:
+def _content_ok(path: Path, mime: str) -> bool:
     with path.open("rb") as f:
-        head = f.read(12)
-    return len(head) >= 8 and head[4:8] == b"ftyp"
+        head = f.read(16)
+    if mime == "video/mp4":
+        return len(head) >= 8 and head[4:8] == b"ftyp"
+    if mime == "image/png":
+        return head.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/jpeg":
+        return head.startswith(b"\xff\xd8\xff")
+    if mime == "image/webp":
+        return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+    return False
 
 
 def _is_jpeg(path: Path) -> bool:
@@ -314,32 +380,30 @@ def _character(con: sqlite3.Connection, slug: str) -> int:
     return row["id"]
 
 
-def _fields(item: ApprovedItem, aid: int, record: dict, media_rel: str) -> dict:
-    return {"account_id": aid, "kind": "reel", "title": item.title, "caption": item.caption, "media": media_rel,
-            "poster": None, "posted_at": parse_time(item.approved_at).isoformat(timespec="seconds"),
-            "status": "published", "public_id": item.public_id, "generation_json": jdump(record)}
-
-
 def _same(row: sqlite3.Row, fields: dict) -> bool:
     return all((jload(row[k], None) == jload(v, None)) if k == "generation_json" else row[k] == v
                for k, v in fields.items())
 
 
-def _publish_item(con: sqlite3.Connection, client: ServiceClient, item: ApprovedItem, *, dry_run: bool,
+def _publish_item(con: sqlite3.Connection, client: ServiceClient, pub: Publication, *, dry_run: bool,
                   media_root: Path, thumb_root: Path) -> tuple[str, bool]:
     """Returns (new|updated|unchanged, poster_written)."""
-    source = f"generation:{item.run_id}"
-    aid = _character(con, item.character_slug)
-    clash = con.execute("SELECT source FROM posts WHERE public_id=?", (item.public_id,)).fetchone()
+    source = f"generation:{pub.public_id}"
+    aid = _character(con, pub.character)
+    clash = con.execute("SELECT source FROM posts WHERE public_id=?", (pub.public_id,)).fetchone()
     if clash and clash["source"] != source:
-        raise PublishError(f"{item.public_id}: public_id already belongs to another post")
-    record = public_record(client.summary(item), item)
-    media_rel = f"gen/{item.public_id}.mp4"
-    fields = _fields(item, aid, record, media_rel)
+        raise PublishError(f"{pub.public_id}: public_id already belongs to another post")
+    record = public_record(client.summary(pub), pub)
     row = con.execute("SELECT * FROM posts WHERE source=?", (source,)).fetchone()
+    media_rel = f"gen/{pub.public_id}{pub.ext}"
+    posted_at = row["posted_at"] if row is not None and row["posted_at"] else \
+        parse_time(pub.approved_at).isoformat(timespec="seconds")       # first approval = post time
+    fields = {"account_id": aid, "kind": pub.kind, "title": None, "caption": pub.caption, "media": media_rel,
+              "poster": None, "posted_at": posted_at, "status": "published", "public_id": pub.public_id,
+              "generation_json": jdump(record)}
     media_dest = media_root / media_rel
-    poster_dest = thumb_root / str(POSTER_WIDTH) / "gen" / f"{item.public_id}.jpg"
-    have_media = media_dest.is_file() and (item.sha256 is None or _sha_file(media_dest) == item.sha256)
+    poster_dest = thumb_root / str(POSTER_WIDTH) / "gen" / f"{pub.public_id}.jpg"
+    have_media = media_dest.is_file() and _sha_file(media_dest) == pub.sha256
     if row is not None and _same(row, fields) and have_media:
         return "unchanged", False
     status = "new" if row is None else "updated"
@@ -353,18 +417,18 @@ def _publish_item(con: sqlite3.Connection, client: ServiceClient, item: Approved
             tempfile.TemporaryDirectory(prefix=".incoming-", dir=poster_dest.parent) as ptmp:
         new_media = None
         if not have_media:
-            new_media = Path(tmp) / "media.mp4"
-            client.download(item.media_url, new_media, f"{item.public_id}: media", item.sha256)
-            if not _is_mp4(new_media):
-                raise PublishError(f"{item.public_id}: media is not an MP4 file")
+            new_media = Path(tmp) / ("media" + pub.ext)
+            client.download(pub.media_url, new_media, f"{pub.public_id}: media", pub.sha256)
+            if not _content_ok(new_media, pub.mime):
+                raise PublishError(f"{pub.public_id}: media is not a {pub.mime} file")
         new_poster = None
         if new_media is not None or not poster_dest.is_file():
             cand = Path(ptmp) / "poster.jpg"
             ok = False
-            if item.poster_url:                    # the service poster first, a video frame as fallback
+            if pub.poster_url:                     # the service poster first, the media itself as fallback
                 raw = Path(tmp) / "poster.src"
                 try:
-                    client.download(item.poster_url, raw, f"{item.public_id}: poster")
+                    client.download(pub.poster_url, raw, f"{pub.public_id}: poster")
                     if ffmpeg_available():
                         ok = make_poster(raw, cand, from_video=False)
                     elif _is_jpeg(raw):
@@ -373,7 +437,7 @@ def _publish_item(con: sqlite3.Connection, client: ServiceClient, item: Approved
                 except PublishError:
                     ok = False
             if not ok:
-                ok = make_poster(new_media or media_dest, cand, from_video=True)
+                ok = make_poster(new_media or media_dest, cand, from_video=pub.kind == "reel")
             new_poster = cand if ok else None
 
         backups: list[tuple[Path, Path | None]] = []
@@ -417,72 +481,87 @@ def _revoke(con: sqlite3.Connection, public_id: str, revoked_at: str | None, *, 
     return "revoked"
 
 
-def _revocations(raw_items: list[Any], raw_revoked: list[Any], failed: list[str]) -> dict[str, str | None]:
-    out: dict[str, str | None] = {}
-    for src, entries in (("revoked", raw_revoked), ("items", [d for d in raw_items
-                                                               if isinstance(d, dict) and d.get("status") == "revoked"])):
-        for d in entries:
-            pid = d.get("public_id") if isinstance(d, dict) else None
-            if not isinstance(pid, str) or not PUBLIC_ID.match(pid):
-                failed.append(f"{src}: revocation without a valid public_id")
-                continue
-            out.setdefault(pid, str(d["revoked_at"]) if d.get("revoked_at") else None)
-    return out
+def _later(a: str | None, b: str | None) -> bool:
+    """a strictly after b (False when either is missing or unparsable)."""
+    try:
+        return a is not None and b is not None and parse_time(a) > parse_time(b)
+    except ValueError:
+        return False
 
 
-def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run: bool = False,
+def _merge(raw_pubs: list[Any], raw_revoked: list[Any], fail: Callable[[str], None]
+           ) -> tuple[list[tuple[int, Any]], dict[str, str | None]]:
+    """Latest state per public_id: (index, raw publication) to publish and {public_id: revoked_at}.
+    Publications are upserts (the last listed wins); between an approval and a revocation of the same
+    id the later timestamp wins, revoked on a tie or a missing/bad time."""
+    revoked: dict[str, str | None] = {}
+    for d in raw_revoked:
+        pid = d.get("public_id") if isinstance(d, dict) else None
+        if not isinstance(pid, str) or not PUBLIC_ID.match(pid):
+            fail("revoked: entry without a valid public_id")
+            continue
+        at = str(d["revoked_at"]) if d.get("revoked_at") else None
+        if pid not in revoked or _later(at, revoked[pid]):
+            revoked[pid] = at
+    pubs: dict[str, tuple[int, Any]] = {}
+    for n, d in enumerate(raw_pubs):
+        pid = d.get("public_id") if isinstance(d, dict) else None
+        key = pid if isinstance(pid, str) and PUBLIC_ID.match(pid) else f"#{n}"
+        pubs[key] = (n, d)
+    for pid in list(pubs):
+        if pid in revoked:
+            if _later(pubs[pid][1].get("approved_at"), revoked[pid]):
+                del revoked[pid]                       # re-approved after the revocation
+            else:
+                del pubs[pid]
+    return sorted(pubs.values(), key=lambda t: t[0]), revoked
+
+
+def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run: bool = False, full: bool = False,
                   transport: httpx.BaseTransport | None = None, media_root: Path | None = None,
                   thumb_root: Path | None = None, log: Callable[[str], None] = lambda s: None) -> dict:
-    """Publish every approved item and unpublish every revoked one.
-    Returns {new, updated, unchanged, revoked, failed: [...], notes: [...], items: [...]}.
-    Items are independent: one failure does not block the others (but makes `failed` non-empty)."""
+    """Publish every approved publication and unpublish every revoked one (since the stored cursor,
+    or all of them with `full` / without a cursor).
+    Returns {new, updated, unchanged, revoked, failed: [...], notes: [...], items: [...], incremental}.
+    Items are independent: one failure does not block the others (but makes `failed` non-empty and
+    keeps the cursor where it was)."""
     media_root = Path(media_root or config.MEDIA_ROOT)
     thumb_root = Path(thumb_root or config.THUMB_ROOT)
+    since = None if full else get_meta(con, CURSOR_KEY)
+    since = since if isinstance(since, str) and since else None
     client = ServiceClient(settings, transport)
     res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "failed": [], "notes": [],
-                           "items": [], "dry_run": dry_run}
+                           "items": [], "dry_run": dry_run, "incremental": since is not None}
 
-    def fail(msg: str, *secrets: str) -> None:
-        msg = _redact(msg, settings.key, *secrets)
+    def fail(msg: str) -> None:
+        msg = _redact(msg, settings.key)
         res["failed"].append(msg)
         log(f"failed {msg}")
 
     try:
         try:
-            raw_items, raw_revoked = client.approved()
+            raw_pubs, raw_revoked, cursor = client.publications(since)
         except PublishError as e:
             fail(str(e))
             return res
-        revoked = _revocations(raw_items, raw_revoked, res["failed"])
-        seen: set[str] = set()
-        for n, d in enumerate(raw_items):
-            if isinstance(d, dict) and d.get("status") == "revoked":
-                continue
+        todo, revoked = _merge(raw_pubs, raw_revoked, fail)
+        for n, d in todo:
             try:
-                if isinstance(d, dict) and d.get("status") not in (None, "approved"):
-                    raise PublishError(f"item #{n}: unknown status {str(d['status'])[:40]!r}")
-                item = ApprovedItem.parse(d)
+                pub = Publication.parse(d)
             except PublishError as e:
-                rid = d.get("run_id") if isinstance(d, dict) and isinstance(d.get("run_id"), str) else ""
-                fail(f"item #{n}: {e}" if not str(e).startswith("item #") else str(e), *([rid] if len(rid) >= 4 else []))
+                fail(f"publication #{n}: {e}")
                 continue
-            if item.public_id in seen:
-                fail(f"{item.public_id}: listed twice")
-                continue
-            seen.add(item.public_id)
-            if item.public_id in revoked:
-                continue                                   # revoked wins over a stale approval
             try:
-                status, poster = _publish_item(con, client, item, dry_run=dry_run, media_root=media_root,
+                status, poster = _publish_item(con, client, pub, dry_run=dry_run, media_root=media_root,
                                                thumb_root=thumb_root)
             except (PublishError, ValueError, OSError, sqlite3.Error) as e:
                 con.rollback()
-                fail(f"{item.public_id}: {e}" if not str(e).startswith(item.public_id) else str(e), item.run_id)
+                fail(f"{pub.public_id}: {e}" if not str(e).startswith(pub.public_id) else str(e))
                 continue
             res[status] += 1
-            res["items"].append({"public_id": item.public_id, "status": status,
+            res["items"].append({"public_id": pub.public_id, "kind": pub.kind, "status": status,
                                  **({"poster": poster} if status != "unchanged" and not dry_run else {})})
-            log(f"{status} {item.public_id}")
+            log(f"{status} {pub.public_id}")
         for pid, at in revoked.items():
             try:
                 r = _revoke(con, pid, at, dry_run=dry_run)
@@ -496,6 +575,9 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                 res["revoked"] += 1
                 res["items"].append({"public_id": pid, "status": "revoked"})
                 log(f"revoked {pid}")
+        if not dry_run and not res["failed"] and cursor and cursor != since:
+            set_meta(con, CURSOR_KEY, cursor)
+            con.commit()
     finally:
         client.close()
     return res
