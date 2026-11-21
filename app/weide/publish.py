@@ -41,6 +41,12 @@ every other input is a "privater Input". Input media are not downloaded (they ar
 Every item is validated on its own, fetched into a temp dir and written in one DB transaction; a failed
 item leaves no post and no file behind and does not stop the others.
 
+Credits: the summary's `credits` list (else the list item's) is kept in generation_json as `credits`
+(generation.sanitize_credits: kind/text/model/license{id,url}, strings only, http(s) URL only; [] when
+missing). A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
+Audio-only publications (`audio_url` without video/image, or an audio/* mime) are not posts: skipped
+with a log line, no failure.
+
 Revoked public_ids are unpublished: the post goes back to status draft (meta `revoked_at` notes why), so
 it vanishes from the API and the export; the media file stays on disk. Unknown ids are a no-op. When an
 id is both approved and revoked in one pull, the later timestamp wins (revoked on a tie or bad time).
@@ -62,8 +68,8 @@ import httpx
 
 from . import config
 from .db import get_meta, jdump, jload, now_iso, parse_time, set_meta, upsert_post
-from .generation import (PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, model_short_label, sanitize,
-                         start_source_sim)
+from .generation import (CREDITS_KEY, PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, model_short_label,
+                         sanitize, sanitize_credits, start_source_sim)
 
 PUBLICATIONS_PATH = "/api/v1/publications"
 CURSOR_KEY = "publications_since"  # meta key: next_since of the last fully successful pull
@@ -137,6 +143,7 @@ class Publication:
     summary_url: str
     poster_url: str | None = None
     start_source_sim: bool = False     # the item's own start_source field is "isaac-sim" (list items lack it today)
+    credits: list = field(default_factory=list)   # the list item's credits (sanitized); the summary's win
 
     @property
     def kind(self) -> str:
@@ -174,7 +181,7 @@ class Publication:
                    approved_at=str(d["approved_at"]), mime=mime, sha256=str(d["sha256"]).lower(), media_url=url,
                    summary_url=summary or f"{PUBLICATIONS_PATH}/{pid}/summary",
                    poster_url=(str(d["poster_url"]) if d.get("poster_url") else None),
-                   start_source_sim=start_source_sim(d))
+                   start_source_sim=start_source_sim(d), credits=sanitize_credits(d.get(CREDITS_KEY)))
 
 
 class ServiceClient:
@@ -282,6 +289,16 @@ class ServiceClient:
             raise PublishError(f"{what}: sha256 mismatch")
 
 
+def audio_only(d: Any) -> bool:
+    """An audio-only publication (`audio_url` and no video/image, or an audio/* mime): not a post (yet)."""
+    if not isinstance(d, dict):
+        return False
+    mime = d.get("mime") if isinstance(d.get("mime"), str) else ""
+    if mime.split(";", 1)[0].strip().lower().startswith("audio/"):
+        return True
+    return bool(d.get("audio_url")) and not d.get("video_url") and not d.get("image_url")
+
+
 def _origin(url: str) -> tuple[str, str]:
     p = urlsplit(url)
     return p.scheme.lower(), p.netloc.lower()
@@ -296,7 +313,7 @@ def _redact(text: str, *secrets: str) -> str:
     return text
 
 
-SUMMARY_DROP = ("public_id", "post_id", "id", "media", "links", "summary_version")
+SUMMARY_DROP = ("public_id", "post_id", "id", "media", "links", "summary_version", CREDITS_KEY)
 INPUT_KEEP = ("label", "role", "position", "strength", "frame_idx", "at_seconds")
 
 
@@ -314,7 +331,8 @@ def _input(x: Any) -> dict:
 def public_record(summary: dict, pub: Publication) -> dict:
     """generation_json for the post: the service summary sanitized again, ids/URLs that belong to the
     service removed, inputs reduced to public references, model_label filled from the model,
-    start_source_sim set when the summary's start_source field (or a segment's) says so (only true is stored)."""
+    start_source_sim set when the summary's start_source field (or a segment's) says so (only true is stored),
+    `credits` always a list (sanitize_credits; the summary's, else the list item's, else [])."""
     inputs = summary.get("inputs")
     s = sanitize({k: v for k, v in summary.items() if k not in SUMMARY_DROP and k != "inputs"}) or {}
     if inputs is not None:
@@ -328,6 +346,8 @@ def public_record(summary: dict, pub: Publication) -> dict:
         s[START_SOURCE_KEY] = True
     else:
         s.pop(START_SOURCE_KEY, None)
+    raw_credits = summary.get(CREDITS_KEY)
+    s[CREDITS_KEY] = sanitize_credits(raw_credits) if isinstance(raw_credits, list) else list(pub.credits)
     return s
 
 
@@ -530,7 +550,8 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                   thumb_root: Path | None = None, log: Callable[[str], None] = lambda s: None) -> dict:
     """Publish every approved publication and unpublish every revoked one (since the stored cursor,
     or all of them with `full` / without a cursor).
-    Returns {new, updated, unchanged, revoked, failed: [...], notes: [...], items: [...], incremental}.
+    Returns {new, updated, unchanged, revoked, skipped, failed: [...], notes: [...], items: [...], incremental}.
+    Audio-only publications are skipped (counted in `skipped`, logged, no post).
     Items are independent: one failure does not block the others (but makes `failed` non-empty and
     keeps the cursor where it was)."""
     media_root = Path(media_root or config.MEDIA_ROOT)
@@ -538,7 +559,7 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
     since = None if full else get_meta(con, CURSOR_KEY)
     since = since if isinstance(since, str) and since else None
     client = ServiceClient(settings, transport)
-    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "failed": [], "notes": [],
+    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "skipped": 0, "failed": [], "notes": [],
                            "items": [], "dry_run": dry_run, "incremental": since is not None}
 
     def fail(msg: str) -> None:
@@ -554,6 +575,13 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
             return res
         todo, revoked = _merge(raw_pubs, raw_revoked, fail)
         for n, d in todo:
+            if audio_only(d):                  # not planned as posts: skip, no failure (the cursor moves on)
+                pid = d.get("public_id")
+                pid = pid if isinstance(pid, str) and PUBLIC_ID.match(pid) else f"#{n}"
+                res["skipped"] += 1
+                res["items"].append({"public_id": pid, "status": "skipped", "reason": "audio-only"})
+                log(f"skipped {pid}: audio-only")
+                continue
             try:
                 pub = Publication.parse(d)
             except PublishError as e:

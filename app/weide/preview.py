@@ -318,6 +318,7 @@ def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request:
     base = f"/preview/media/{quote(it.id, safe='')}"
     media_url = f"{base}/output" if it.output_url else None
     poster_url = f"{base}/poster" if it.poster_url else (media_url if it.output_kind == "image" else None)
+    # audio-only items (no picture): a text card with an audio player (media_kind "audio")
     kind = "reel" if it.output_kind == "video" else "image" if it.output_kind == "image" else "text"
     return {
         "id": ID_PREFIX + it.id, "kind": kind, "title": None, "caption": caption, "hashtags": None,
@@ -331,7 +332,7 @@ def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request:
                     "lab_url": lab_url(request, it.id, it.lab_path), "model": model, "task": it.task, "prompt": it.prompt,
                     "caption_is_fallback": not own_caption, "created_at": it.created_at, "finished_at": it.finished_at,
                     "width": it.width, "height": it.height, "fps": it.fps, "duration_s": it.duration_s,
-                    "has_audio": it.has_audio, "start_source_sim": sim},
+                    "has_audio": it.has_audio, "start_source_sim": sim, "credits": it.credits},
     }
 
 

@@ -23,6 +23,7 @@ import posixpath
 import re
 import sqlite3
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .db import jload
 
@@ -54,6 +55,70 @@ def model_short_label(model: Any) -> str | None:
             if label:
                 return label
     return None
+
+
+# --- credits ----------------------------------------------------------------------------------------
+# The service's `credits` list on publication items, summaries and review items:
+#   [{kind: "license_notice" | "audio_source", text, model, license: {id, url}}]
+# A license_notice text is a licence obligation ("Powered by Stability AI"): it is shown wherever the
+# model line is shown. Only these keys survive, every value must be a string, the license URL must be
+# http(s) (the one URL a public summary may carry; summary_leaks checks it with these rules).
+
+CREDITS_KEY = "credits"
+CREDIT_FIELDS = ("kind", "text", "model")
+_CREDIT_MAX = 500
+_MAX_CREDITS = 50
+
+
+def _credit_str(v: Any) -> str | None:
+    if not isinstance(v, str):
+        return None
+    s = clean_string(" ".join(v.split()))
+    return s[:_CREDIT_MAX] if s else None
+
+
+def _license_url(v: Any) -> str | None:
+    if not isinstance(v, str) or len(v) > 2000 or any(c.isspace() or ord(c) < 32 for c in v):
+        return None
+    try:
+        u = urlsplit(v)
+        host = u.hostname
+    except ValueError:
+        return None
+    if u.scheme not in ("http", "https") or not host or u.username or u.password or "@" in u.netloc:
+        return None
+    if _IP.fullmatch(host) or not _HOST_PORT.sub("", host) or "." not in host:   # no IPs / internal hosts
+        return None
+    return v
+
+
+def sanitize_credits(raw: Any) -> list[dict]:
+    """The public form of a `credits` list: entries with a text, keys kind/text/model/license{id,url}
+    only, strings only, http(s) license URL only. Missing/null/garbage -> []."""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw[:_MAX_CREDITS]:
+        if not isinstance(item, dict):
+            continue
+        c = {k: s for k in CREDIT_FIELDS if (s := _credit_str(item.get(k)))}
+        if "text" not in c:
+            continue                       # nothing to show
+        lic = item.get("license")
+        if isinstance(lic, dict):
+            lic_out = {k: s for k, s in (("id", _credit_str(lic.get("id"))), ("url", _license_url(lic.get("url"))))
+                       if s}
+            if lic_out:
+                c["license"] = lic_out
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def credits_leaks(obj: Any, where: str, hits: list[str]) -> None:
+    """Leak check for a credits list: it must be exactly its sanitized form."""
+    if not isinstance(obj, list) or sanitize_credits(obj) != obj:
+        hits.append(f"{where}: credits not in public form {str(obj)[:80]!r}")
 
 
 # --- start source -----------------------------------------------------------------------------------
@@ -236,8 +301,10 @@ def public_summary(con: sqlite3.Connection, row: sqlite3.Row) -> dict | None:
     if not isinstance(gen, dict) or not row["public_id"]:
         return None
     raw_inputs = gen.get("inputs")
-    body = sanitize({k: v for k, v in gen.items() if k not in ("inputs", "public_id", "post_id")})
+    body = sanitize({k: v for k, v in gen.items() if k not in ("inputs", "public_id", "post_id", CREDITS_KEY)})
     out = {"public_id": row["public_id"], "post_id": row["id"], **body}
+    if CREDITS_KEY in gen:                 # records imported before credits existed have none
+        out[CREDITS_KEY] = sanitize_credits(gen.get(CREDITS_KEY))
     label = model_short_label(gen.get("model_label")) or model_short_label(gen.get("model"))
     if label:
         out["model_label"] = label
@@ -251,17 +318,21 @@ def public_summary(con: sqlite3.Connection, row: sqlite3.Row) -> dict | None:
     return out
 
 
-def summary_leaks(obj: Any, where: str, hits: list[str]) -> None:
+def summary_leaks(obj: Any, where: str, hits: list[str], *, top: bool = True) -> None:
     """Leak scan for a public summary: private key names, paths, URLs with hosts, IPs, tokens, run ids.
-    Prompts and settings (seed, steps, a parameter called `key` ...) are allowed."""
+    Prompts and settings (seed, steps, a parameter called `key` ...) are allowed. The top-level
+    `credits` list is checked by credits_leaks (its license URL is public)."""
     if isinstance(obj, dict):
         for k, v in obj.items():
             if is_private_key(k):
                 hits.append(f"{where}: private key {k!r}")
-            summary_leaks(v, where, hits)
+            if top and k == CREDITS_KEY:
+                credits_leaks(v, where, hits)
+                continue
+            summary_leaks(v, where, hits, top=False)
     elif isinstance(obj, list):
         for x in obj:
-            summary_leaks(x, where, hits)
+            summary_leaks(x, where, hits, top=False)
     elif isinstance(obj, str):
         if clean_string(obj) != obj:
             hits.append(f"{where}: private value {obj[:80]!r}")

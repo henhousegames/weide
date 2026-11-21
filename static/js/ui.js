@@ -63,6 +63,11 @@ export function media(post, { autoplay = true } = {}) {
       h("img", { class: "media__backdrop", src: post.poster_url || src, alt: "", "aria-hidden": "true", loading: "lazy" }),
       h("img", { class: "media__img", src, alt: post.caption ? `Bild: ${post.caption.slice(0, 80)}` : "Bild", loading: "lazy" }));
   }
+  if (post.media_kind === "audio" && post.media_url) {      // audio-only (private preview): a plain player
+    return h("div", { class: "media media--audio" },
+      h("p", { class: "media__audiocap" }, post.caption || ""),
+      h("audio", { class: "media__audio", src: post.media_url, controls: true, preload: "none" }));
+  }
   return h("div", { class: "textpost" }, post.caption || "");
 }
 
@@ -136,6 +141,24 @@ export function genBadge(post, { withMissing = false } = {}) {
   return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Keine Generierungsdetails verfügbar") : null;
 }
 
+// Credits under the model line: every credit text (licence notices such as "Powered by Stability AI",
+// CC0 audio sources), small. Text via textContent only; a licence URL (http/https) links the text.
+// `detail` adds model and licence id (generation page). No credits -> null (no empty element).
+export const safeUrl = (u) => (typeof u === "string" && /^https?:\/\/[^\s"'<>]+$/i.test(u) ? u : null);
+
+export function genCredits(credits, { detail = false } = {}) {
+  const list = Array.isArray(credits) ? credits.filter((c) => c && typeof c.text === "string" && c.text) : [];
+  if (!list.length) return null;
+  return h("ul", { class: "gen-credits" }, list.map((c) => {
+    const url = safeUrl(c.license?.url);
+    const text = url ? h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, c.text) : c.text;
+    const extra = detail ? [typeof c.model === "string" ? c.model : null,
+      typeof c.license?.id === "string" ? c.license.id : null].filter(Boolean).join(" · ") : "";
+    return h("li", { class: `gen-credit${typeof c.kind === "string" ? ` gen-credit--${c.kind.replace(/[^a-z0-9_-]/gi, "")}` : ""}` },
+      text, extra ? h("span", { class: "gen-credit__meta" }, ` · ${extra}`) : null);
+  }));
+}
+
 export const disclaimer = () => (typeof state.meta?.disclaimer === "string" && state.meta.disclaimer) || DISCLAIMER;
 
 // robot accounts: the flag from the API, or the kind for data exported before the flag existed
@@ -170,6 +193,7 @@ export function postCard(post) {
       reactionBar(post, { showComments: false }),
       post.hashtags ? captionNode(post, false) : null,
       genBadge(post),
+      genCredits(post.generation?.credits),
       robotNote(post),
       h("a", { class: "post__more", href }, n ? [icons.comment(), plural(n, "Kommentar", "Kommentare")] : "Zum Post"));
   }
@@ -183,7 +207,8 @@ export function postCard(post) {
       h("div", { class: "post__overlay" },
         postHead(post),
         cap,
-        genBadge(post)),
+        genBadge(post),
+        genCredits(post.generation?.credits)),
       reactionBar(post, { showComments: true, rail: true })),
     robotNote(post));
 }

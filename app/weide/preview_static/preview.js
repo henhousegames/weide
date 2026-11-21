@@ -1,7 +1,8 @@
 // Private preview only (served by `weide serve --preview`, never part of the static export).
 // Adds the slim PREVIEW bar, a small status pill on preview cards (approved-not-live / drafts) and turns
 // the post page of a preview card (#/p/vs-<id>) into the draft detail: large media, prompt, model, task,
-// output facts, created date and the Lab link. Cards themselves are rendered by the normal frontend; this
+// output facts (credits under the model), created date and the Lab link. Audio-only drafts are text cards
+// with an audio player (static/js/ui.js media()). Cards themselves are rendered by the normal frontend; this
 // script remembers which ids are previews (from the API responses) and decorates those cards.
 // Reactions are disabled: the preview is read-only.
 (function () {
@@ -12,6 +13,24 @@
   const SHORT = { draft: "Entwurf", approved: "Freigegeben" };
   const SIM_NOTE = "Startbild aus eigener Simulation";
   const simNote = (p) => (p.start_source_sim === true ? el("span", "gen-note", SIM_NOTE) : null);
+  // credits (licence notices, audio sources) under the model line, like static/js/ui.js genCredits():
+  // text via textContent, http(s) licence URL as link, nothing at all for an empty list
+  const safeUrl = (u) => (typeof u === "string" && /^https?:\/\/[^\s"'<>]+$/i.test(u) ? u : null);
+  function credits(p) {
+    const list = Array.isArray(p.credits) ? p.credits.filter((c) => c && typeof c.text === "string" && c.text) : [];
+    if (!list.length) return null;
+    return el("ul", "gen-credits", ...list.map((c) => {
+      const url = safeUrl(c.license && c.license.url);
+      let text = c.text;
+      if (url) {
+        text = el("a", null, c.text);
+        text.href = url;
+        text.target = "_blank";
+        text.rel = "noopener noreferrer";
+      }
+      return el("li", "gen-credit", text);
+    }));
+  }
 
   const origFetch = window.fetch.bind(window);
   window.fetch = async function (input, init) {
@@ -63,7 +82,7 @@
 
   function facts(p) {
     const rows = [
-      ["Modell", p.model ? [p.model, simNote(p)] : null],
+      ["Modell", p.model ? [p.model, simNote(p), credits(p)] : null],
       ["Aufgabe", p.task ? (TASKS[p.task] ? `${TASKS[p.task]} (${p.task})` : p.task) : null],
       ["Auflösung", p.width && p.height ? `${p.width} × ${p.height}` : null],
       ["Bildrate", p.fps ? `${num(p.fps, 2)} fps` : null],
@@ -103,12 +122,16 @@
     article.classList.add("pv-card", `pv-card--${p.state}`);
     const media = article.querySelector(".post__frame, .postpage__media .media, .media, .textpost");
     if (media) media.append(el("div", "pv-tags", pill(p)));
-    // the model note: under the caption on cards (preview cards carry no "Erstellt mit" badge)
-    const note = !article.classList.contains("postpage") && simNote(p);
-    if (note) {
+    // the model note and credits: under the caption on cards (preview cards carry no "Erstellt mit" badge)
+    if (!article.classList.contains("postpage")) {
+      const note = simNote(p);
+      const cr = credits(p);
       const at = article.querySelector(".post__overlay");
-      if (at) at.append(el("span", "gen-line", note));
-      else article.querySelector(".post__more")?.before(el("span", "gen-line pv-note-line", note));
+      for (const node of [note && el("span", at ? "gen-line" : "gen-line pv-note-line", note), cr]) {
+        if (!node) continue;
+        if (at) at.append(node);
+        else article.querySelector(".post__more")?.before(node);
+      }
     }
     if (article.classList.contains("postpage")) {
       article.classList.add("pv-detail");
