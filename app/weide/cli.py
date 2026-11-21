@@ -1,11 +1,13 @@
 """Command line: `uv run weide <command>`.
 
 Commands: migrate, import-public, import-legacy-db, seed-characters, serve (--preview), preview-key,
+preview-login-link,
 export-static, pull-approved, deploy.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -153,6 +155,32 @@ def cmd_deploy(a: argparse.Namespace) -> None:
         _die("; ".join(res["errors"][:10]), code=1)
 
 
+def cmd_preview_login_link(a: argparse.Namespace) -> None:
+    import ipaddress
+
+    from .preview import DEFAULT_PORT, PreviewConfigError, is_loopback, parse_hosts
+    from .preview_login import LinkStore, read_env_file
+    from .preview_auth import key_file
+    envfile = read_env_file(Path(a.env_file).expanduser() if a.env_file else key_file().parent / "preview.env")
+
+    def setting(name: str) -> str | None:
+        return config.env(name) or envfile.get(config.ENV_PREFIX + name)
+    host = a.host
+    if not host:
+        try:
+            hosts = parse_hosts(setting("PREVIEW_HOSTS"))
+        except PreviewConfigError as e:
+            _die(str(e))
+        host = next((h for h in hosts if not is_loopback(h)), hosts[0])
+    port = a.port or int(setting("PREVIEW_PORT") or DEFAULT_PORT)
+    with contextlib.suppress(ValueError):
+        if ipaddress.ip_address(host).version == 6:
+            host = f"[{host}]"
+    nonce = LinkStore().create()
+    print(f"http://{host}:{port}/login#link={nonce}")
+    print("one-time link, valid for 10 minutes", file=sys.stderr)
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="weide", description=f"{config.APP_NAME}: {config.APP_TAGLINE}")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -193,6 +221,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--path", default=None, help="key file (default: $HENHOUSE_PREVIEW_KEY_FILE or "
                    "~/.config/henhouse/preview.key)")
     s.set_defaults(fn=cmd_preview_key)
+
+    s = sub.add_parser("preview-login-link", help="print a one-time login URL for the preview (10 min, single use)")
+    s.add_argument("--host", default=None, help="host in the URL (default: first non-loopback preview host)")
+    s.add_argument("--port", type=int, default=None, help="port in the URL (default: preview port)")
+    s.add_argument("--env-file", default=None,
+                   help="(default: preview.env next to the key file) EnvironmentFile to read the preview hosts/port from when not set in the environment")
+    s.set_defaults(fn=cmd_preview_login_link)
 
     s = sub.add_parser("export-static", help="write a static snapshot (published posts only) for a plain file host")
     s.add_argument("outdir")

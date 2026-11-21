@@ -14,7 +14,8 @@ refused; nothing here imports or runs export, deploy or publish code; the publis
 (HENHOUSE_SERVICE_KEY) is dropped from the environment at startup. The service is polled with a
 read-only `review` key (review.py) that never reaches the browser: draft media are streamed through
 /preview/media/... (auth required, Range passed through). Every route needs the login cookie
-(preview_auth.py). Hosts: a comma separated list (HENHOUSE_PREVIEW_HOSTS or --host), never a wildcard
+(preview_auth.py; owner auto-login over Tailscale and one-time links in
+preview_login.py). Hosts: a comma separated list (HENHOUSE_PREVIEW_HOSTS or --host), never a wildcard
 address; non-loopback addresses are bound with IP_FREEBIND so a Tailscale address that is not up yet
 at boot does not fail the start.
 """
@@ -41,6 +42,7 @@ from starlette.background import BackgroundTask
 from . import config
 from .db import parse_time
 from .preview_auth import install_auth, load_key
+from .preview_login import LinkStore, OwnerAutoLogin, owner_logins
 from .review import DRAFT_STATUS, GEN_ID, SLUG, ReviewClient, ReviewError, ReviewItem, ReviewSettings
 from .server import POST_SQL, PUBLISHED, account_brief, create_app, feed_page, _csv
 
@@ -304,20 +306,24 @@ def _index_html() -> str:
 
 def create_preview_app(db_path: str | Path | None = None, *, token: str | None = None,
                        settings: ReviewSettings | None = None, transport: httpx.AsyncBaseTransport | None = None,
-                       poll_interval: float | None = POLL_SECONDS) -> FastAPI:
+                       poll_interval: float | None = POLL_SECONDS, auto: OwnerAutoLogin | None = None,
+                       links: LinkStore | None = None) -> FastAPI:
     """The preview app. token: the login token (default: read from the key file). settings/transport:
     the review API (default: from the environment; None = not connected). poll_interval None: no
-    background polling (tests call app.state.store.poll_once())."""
+    background polling (tests call app.state.store.poll_once()). auto/links: owner auto-login and the
+    one-time link store (default: from the private config dir)."""
     drop_publish_key()
     token = token or load_key()
     if settings is None:
         settings = ReviewSettings.load()
     client = ReviewClient(settings, transport=transport) if settings else None
     store = ReviewStore(client)
+    auto = auto if auto is not None else OwnerAutoLogin(owner_logins())
+    links = links if links is not None else LinkStore()
 
     def setup(app: FastAPI, db: Callable[[], Any]) -> None:
         app.state.store = store
-        install_auth(app, token)
+        install_auth(app, token, auto=auto, links=links)
 
         @contextlib.asynccontextmanager
         async def lifespan(_: FastAPI) -> AsyncIterator[None]:

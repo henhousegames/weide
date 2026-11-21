@@ -86,6 +86,17 @@ class FakeService:
         return httpx.Response(404)
 
 
+@pytest.fixture(autouse=True)
+def private_config(tmp_path, monkeypatch):
+    """Key, config and link files of the tests live in a temp dir, never in the real home."""
+    d = tmp_path / "henhouse-config"
+    monkeypatch.setenv("HENHOUSE_PREVIEW_KEY_FILE", str(d / "preview.key"))
+    for name in ("HENHOUSE_PREVIEW_CONFIG", "HENHOUSE_PREVIEW_LINKS_FILE", "HENHOUSE_PREVIEW_HOSTS",
+                 "HENHOUSE_PREVIEW_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    return d
+
+
 @pytest.fixture
 def henhouse_db(db_path):
     con = db.connect(db_path)
@@ -117,8 +128,12 @@ def app(henhouse_db, service, monkeypatch):
     return a
 
 
+def origin(c) -> dict:
+    return {"Origin": str(c.base_url).rstrip("/")}
+
+
 def login(c: TestClient, token: str = TOKEN) -> httpx.Response:
-    return c.post("/login", data={"token": token}, follow_redirects=False)
+    return c.post("/login", data={"token": token}, follow_redirects=False, headers=origin(c))
 
 
 @pytest.fixture
@@ -160,7 +175,8 @@ def test_auth_required_on_every_route_group(app):
 def test_login_sets_strict_httponly_cookie(app):
     c = TestClient(app)
     page = c.get("/login")
-    assert page.status_code == 200 and 'name="token"' in page.text
+    assert page.status_code == 200 and 'name="token"' not in page.text and "/login/token" not in page.text
+    assert 'name="token"' in c.get("/login/token").text            # hidden fallback form
     assert login(c, "wrong").status_code == 401
     r = login(c)
     assert r.status_code == 303 and r.headers["location"] == "/"
@@ -488,7 +504,7 @@ def test_real_server_access_log_has_no_token_or_cookie(henhouse_db, monkeypatch)
         base = f"http://127.0.0.1:{port}"
         with httpx.Client(base_url=base) as h:
             assert h.get("/", follow_redirects=False).status_code == 303
-            r = h.post("/login", data={"token": TOKEN}, follow_redirects=False)
+            r = h.post("/login", data={"token": TOKEN}, follow_redirects=False, headers={"Origin": base})
             assert r.status_code == 303
             assert h.get("/api/feed").status_code == 200
             assert h.get(f"/api/meta?x={'z' * 5}").status_code == 200
@@ -500,3 +516,180 @@ def test_real_server_access_log_has_no_token_or_cookie(henhouse_db, monkeypatch)
     blob = "\n".join(records)
     assert "/api/feed" in blob                           # the access log did record requests
     assert TOKEN not in blob and preview_auth.session_value(TOKEN) not in blob
+
+
+# --- owner auto-login over Tailscale ------------------------------------------------------------------
+
+from weide import preview_login  # noqa: E402
+
+OWNER = "owner@example.com"
+TS_IP = "100.101.102.103"
+
+
+class FakeWhois:
+    def __init__(self, logins: dict[str, str] | None = None, error: bool = False):
+        self.logins, self.error, self.calls = logins or {}, error, []
+
+    def __call__(self, ip):
+        self.calls.append(ip)
+        if self.error:
+            raise TimeoutError("whois timed out")
+        name = self.logins.get(ip)
+        return {"Node": {"Name": "x"}, "UserProfile": {"LoginName": name}} if name else None
+
+
+def auto_app(henhouse_db, whois, owners=(OWNER,), tmp=None):
+    return preview.create_preview_app(henhouse_db, token=TOKEN, settings=None, poll_interval=None,
+                                      auto=preview_login.OwnerAutoLogin(set(owners), whois=whois),
+                                      links=preview_login.LinkStore(tmp / "links.json") if tmp else None)
+
+
+def test_owner_on_tailscale_is_logged_in_automatically(henhouse_db):
+    whois = FakeWhois({TS_IP: OWNER})
+    c = TestClient(auto_app(henhouse_db, whois), client=(TS_IP, 40000))
+    r = c.get("/", follow_redirects=False)
+    assert r.status_code == 200 and "preview.js" in r.text
+    cookie = r.headers["set-cookie"]
+    assert preview_auth.session_value(TOKEN) in cookie and "samesite=strict" in cookie.lower()
+    assert c.get("/api/feed").status_code == 200
+    assert c.get("/login", follow_redirects=False).headers["location"] == "/"
+    assert whois.calls == [TS_IP]                    # one whois; afterwards the cookie is enough
+
+
+def test_non_owner_and_whois_errors_are_denied(henhouse_db):
+    for whois in (FakeWhois({TS_IP: "someone-else@example.com"}), FakeWhois(error=True), FakeWhois({}),
+                  FakeWhois({TS_IP: "tagged-devices"})):
+        c = TestClient(auto_app(henhouse_db, whois), client=(TS_IP, 40000))
+        assert c.get("/", follow_redirects=False).headers["location"] == "/login"
+        assert c.get("/api/feed").status_code == 401
+        assert "set-cookie" not in c.get("/login").headers
+
+
+def test_loopback_and_spoofed_headers_never_auto_login(henhouse_db):
+    whois = FakeWhois({TS_IP: OWNER, "127.0.0.1": OWNER})
+    spoof = {"X-Forwarded-For": TS_IP, "X-Real-IP": TS_IP, "Forwarded": f"for={TS_IP}"}
+    c = TestClient(auto_app(henhouse_db, whois), client=("127.0.0.1", 40000))
+    assert c.get("/api/feed", headers=spoof).status_code == 401
+    other = TestClient(auto_app(henhouse_db, whois), client=("192.168.1.20", 40000))
+    assert other.get("/api/feed", headers=spoof).status_code == 401
+    assert whois.calls == []                         # whois is not even asked
+
+
+def test_tailscale_ip_ranges():
+    assert preview_login.tailscale_ip("100.64.0.1") == "100.64.0.1"
+    assert preview_login.tailscale_ip("100.127.255.254") == "100.127.255.254"
+    assert preview_login.tailscale_ip("::ffff:100.64.0.1") == "100.64.0.1"
+    assert preview_login.tailscale_ip("fd7a:115c:a1e0::1") == "fd7a:115c:a1e0::1"
+    for no in ("127.0.0.1", "::1", "100.128.0.1", "10.0.0.1", "fd7a:115c:a1e1::1", "testclient", None):
+        assert preview_login.tailscale_ip(no) is None, no
+
+
+def test_whois_cache_ttl():
+    now = [0.0]
+    whois = FakeWhois({TS_IP: OWNER})
+    auto = preview_login.OwnerAutoLogin({OWNER}, whois=whois, ttl=60, clock=lambda: now[0])
+    assert auto.grants(TS_IP) and auto.grants(TS_IP) and len(whois.calls) == 1
+    whois.logins = {}
+    now[0] = 59
+    assert auto.grants(TS_IP) and len(whois.calls) == 1
+    now[0] = 61
+    assert not auto.grants(TS_IP) and len(whois.calls) == 2
+    assert not preview_login.OwnerAutoLogin(set(), whois=whois).grants(TS_IP)   # no owners configured
+
+
+def test_owner_config_file(private_config):
+    path = private_config / "preview.toml"
+    private_config.mkdir(parents=True, exist_ok=True)
+    path.write_text('owner_tailscale_logins = ["owner@example.com", " "]\n')
+    path.chmod(0o600)
+    assert preview_login.owner_logins() == {OWNER}
+    path.chmod(0o644)
+    assert preview_login.owner_logins() == set()        # readable by others: ignored
+    path.chmod(0o600)
+    path.write_text("not = [toml")
+    assert preview_login.owner_logins() == set()
+    path.unlink()
+    assert preview_login.owner_logins() == set()
+
+
+def test_run_whois_uses_argv_without_shell(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(argv=argv, **kw)
+        return subprocess.CompletedProcess(argv, 0, stdout='{"UserProfile": {"LoginName": "owner@example.com"}}')
+    monkeypatch.setattr(preview_login.shutil, "which", lambda name: "/usr/bin/tailscale")
+    monkeypatch.setattr(preview_login.subprocess, "run", fake_run)
+    assert preview_login.run_whois(TS_IP)["UserProfile"]["LoginName"] == OWNER
+    assert seen["argv"][1:] == ["whois", "--json", TS_IP] and not seen.get("shell") and seen["timeout"]
+
+    def timeout(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 3)
+    monkeypatch.setattr(preview_login.subprocess, "run", timeout)
+    assert preview_login.run_whois(TS_IP) is None
+
+
+# --- one-time login links ------------------------------------------------------------------------------
+
+def link_login(c, nonce, headers=None):
+    return c.post("/login/link", data={"nonce": nonce}, follow_redirects=False,
+                  headers=origin(c) if headers is None else headers)
+
+
+def test_login_link_is_single_use(henhouse_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(preview_auth, "FAIL_DELAY", 0)
+    app = auto_app(henhouse_db, FakeWhois(), owners=(), tmp=tmp_path)
+    store = preview_login.LinkStore(tmp_path / "links.json")
+    nonce = store.create()
+    assert nonce not in (tmp_path / "links.json").read_text()
+    assert stat.S_IMODE((tmp_path / "links.json").stat().st_mode) == 0o600
+    c = TestClient(app)
+    r = link_login(c, nonce)
+    assert r.status_code == 303 and preview_auth.session_value(TOKEN) in r.headers["set-cookie"]
+    assert c.get("/api/feed").status_code == 200
+    c2 = TestClient(app)
+    assert link_login(c2, nonce).status_code == 401          # used up
+    assert c2.get("/api/feed").status_code == 401
+
+
+def test_login_link_expires(tmp_path):
+    now = [1000.0]
+    store = preview_login.LinkStore(tmp_path / "links.json", ttl=600, clock=lambda: now[0])
+    a, b = store.create(), store.create()
+    now[0] += 599
+    assert store.consume(a)
+    now[0] += 2
+    assert not store.consume(b)
+    assert not store.consume("nope") and not store.consume("")
+    assert json.loads((tmp_path / "links.json").read_text()) == {"links": []}
+
+
+def test_login_posts_require_same_origin(henhouse_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(preview_auth, "FAIL_DELAY", 0)
+    app = auto_app(henhouse_db, FakeWhois(), owners=(), tmp=tmp_path)
+    nonce = preview_login.LinkStore(tmp_path / "links.json").create()
+    c = TestClient(app)
+    for bad in ({}, {"Origin": "http://evil.example"}, {"Origin": "null"}, {"Referer": "http://evil.example/x"}):
+        assert link_login(c, nonce, headers=bad).status_code == 403, bad
+        assert c.post("/login", data={"token": TOKEN}, headers=bad, follow_redirects=False).status_code == 403
+    assert link_login(c, nonce, headers={"Referer": "http://testserver/login"}).status_code == 303
+
+
+def test_login_page_posts_fragment_nonce(app):
+    html = TestClient(app).get("/login").text
+    assert 'action="/login/link"' in html and "location.hash" in html and "preview-login-link" in html
+
+
+def test_cli_preview_login_link(tmp_path, capsys, private_config, monkeypatch):
+    env = tmp_path / "preview.env"
+    env.write_text("HENHOUSE_PREVIEW_HOSTS=127.0.0.1,100.64.0.7\nHENHOUSE_PREVIEW_PORT=18510\n")
+    cli.main(["preview-login-link", "--env-file", str(env)])
+    url = capsys.readouterr().out.strip()
+    assert url.startswith("http://100.64.0.7:18510/login#link=")
+    nonce = url.split("#link=", 1)[1]
+    assert preview_login.LinkStore().consume(nonce) and not preview_login.LinkStore().consume(nonce)
+    cli.main(["preview-login-link", "--host", "fd7a:115c:a1e0::5", "--env-file", str(tmp_path / "none")])
+    assert capsys.readouterr().out.startswith("http://[fd7a:115c:a1e0::5]:18510/login#link=")
+    monkeypatch.setenv("HENHOUSE_PREVIEW_HOSTS", "127.0.0.1")
+    cli.main(["preview-login-link"])
+    assert capsys.readouterr().out.startswith("http://127.0.0.1:18510/login#link=")

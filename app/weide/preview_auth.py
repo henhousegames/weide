@@ -1,9 +1,12 @@
 """Auth for the private preview: one shared token, a login form, an HMAC-derived session cookie.
 
 The token lives in a file (default ~/.config/henhouse/preview.key, override HENHOUSE_PREVIEW_KEY_FILE),
-created by `weide preview-key` (dir 700, file 600). POST /login compares the submitted token in constant
-time and sets a cookie whose value is HMAC(token, label), never the token itself; rotating the token
-invalidates every session. Everything else (pages, /api, /media, /thumb, /avatar, /static, /preview)
+created by `weide preview-key` (dir 700, file 600). The cookie value is HMAC(token, label), never the
+token itself; rotating the token invalidates every session. Ways to get the cookie (preview_login.py):
+owner auto-login over Tailscale, a one-time login link (`weide preview-login-link`, POST /login/link),
+and as a hidden fallback the token form (GET /login/token, POST /login, constant-time compare). Both
+login POSTs are CSRF-checked (Origin/Referer must be this host) on top of SameSite=Strict and are
+rate-limited. Everything else (pages, /api, /media, /thumb, /avatar, /static, /preview)
 requires the cookie: HTML page requests are redirected to /login, the rest answer 401. The token is
 never accepted from a query string, and neither token nor cookie is ever logged or echoed.
 """
@@ -19,12 +22,16 @@ import stat
 import time
 from collections import deque
 from pathlib import Path
-from urllib.parse import parse_qs
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from . import config
+
+if TYPE_CHECKING:
+    from .preview_login import LinkStore, OwnerAutoLogin
 
 COOKIE = f"{config.APP_SLUG}_preview"
 COOKIE_MAX_AGE = 365 * 24 * 3600
@@ -34,7 +41,7 @@ FAIL_WINDOW = 15 * 60            # seconds
 FAIL_PER_CLIENT = 5              # failed logins per client and window before 429
 FAIL_GLOBAL = 50                 # failed logins overall per window before 429
 FAIL_DELAY = 0.5                 # seconds added to every failed attempt
-OPEN_PATHS = {"/login"}
+OPEN_PATHS = {"/login", "/login/token", "/login/link"}
 SECURITY_HEADERS = {"X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"}
 
 
@@ -110,30 +117,51 @@ class FailLimiter:
             self.fails = {k: v for k, v in self.fails.items() if v and v[-1] > now - self.window}
 
 
-LOGIN_PAGE = """<!doctype html>
+
+
+PAGE = """<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>{app} Preview – Anmelden</title>
 <style>
 body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#173524;color:#eef3e6;
 font:16px/1.4 ui-sans-serif,system-ui,sans-serif}}
-form{{width:min(92vw,360px);display:grid;gap:12px;padding:24px;border:1px solid #2f5a41;border-radius:16px}}
+.box{{width:min(92vw,380px);display:grid;gap:12px;padding:24px;border:1px solid #2f5a41;border-radius:16px}}
 h1{{margin:0;font-size:20px}} .tag{{display:inline-block;background:#ffc928;color:#1b1a12;border-radius:6px;
 padding:1px 8px;font-weight:700;font-size:13px;letter-spacing:.04em}}
+p{{margin:0}} code{{background:#0f2619;padding:1px 6px;border-radius:6px}}
 input{{font:inherit;padding:10px 12px;border-radius:10px;border:1px solid #2f5a41;background:#0f2619;color:inherit}}
 button{{font:inherit;font-weight:700;padding:10px;border:0;border-radius:10px;background:#ffc928;color:#1b1a12;cursor:pointer}}
-.err{{color:#ff8a4c;margin:0}}
+.err{{color:#ff8a4c}}
 </style></head><body>
-<form method="post" action="/login" autocomplete="off">
+<div class="box">
 <h1>{app} <span class="tag">PREVIEW</span></h1>
+{error}{body}
+</div></body></html>"""
+
+LOGIN_BODY = """<p>Privat. Öffne die Preview über Tailscale von deinem eigenen Gerät aus, oder erzeuge einen
+Login-Link mit <code>weide preview-login-link</code>.</p>
+<form id="link" method="post" action="/login/link" hidden><input type="hidden" name="nonce"></form>
+<script>
+(function () {
+  var m = /[#&]link=([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (!m) return;
+  history.replaceState(null, "", "/login");
+  var f = document.getElementById("link");
+  f.nonce.value = m[1];
+  f.submit();
+})();
+</script>"""
+
+TOKEN_BODY = """<form method="post" action="/login" autocomplete="off" style="display:grid;gap:12px">
 <label for="token">Preview-Schlüssel</label>
 <input id="token" name="token" type="password" required autofocus>
-{error}<button type="submit">Anmelden</button>
-</form></body></html>"""
+<button type="submit">Anmelden</button>
+</form>"""
 
 
-def login_page(error: str | None = None, status: int = 200) -> HTMLResponse:
+def page(body: str, error: str | None = None, status: int = 200) -> HTMLResponse:
     err = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    return HTMLResponse(LOGIN_PAGE.format(app=html.escape(config.APP_NAME), error=err), status_code=status,
+    return HTMLResponse(PAGE.format(app=html.escape(config.APP_NAME), error=err, body=body), status_code=status,
                         headers={"Cache-Control": "no-store", **SECURITY_HEADERS})
 
 
@@ -145,7 +173,23 @@ def wants_html(request: Request) -> bool:
     return True
 
 
-def install_auth(app: FastAPI, token: str, limiter: FailLimiter | None = None) -> None:
+def same_origin(request: Request) -> bool:
+    """CSRF check for the login POSTs (besides SameSite=Strict): Origin, else Referer, must be this
+    very host. A request with neither (or `Origin: null`) is refused."""
+    src = request.headers.get("origin") or request.headers.get("referer")
+    if not src or src == "null":
+        return False
+    u = urlsplit(src)
+    return u.scheme in ("http", "https") and bool(u.netloc) and u.netloc == request.headers.get("host")
+
+
+def peer(request: Request) -> str | None:
+    """The TCP peer address. Client-supplied headers (X-Forwarded-For, ...) are never consulted."""
+    return request.client.host if request.client else None
+
+
+def install_auth(app: FastAPI, token: str, limiter: FailLimiter | None = None, *,
+                 auto: "OwnerAutoLogin | None" = None, links: "LinkStore | None" = None) -> None:
     """Login routes + a middleware that guards every other path (loopback included)."""
     expected = session_value(token)
     limiter = limiter or FailLimiter()
@@ -154,11 +198,28 @@ def install_auth(app: FastAPI, token: str, limiter: FailLimiter | None = None) -
         got = request.cookies.get(COOKIE) or ""
         return hmac.compare_digest(got.encode(), expected.encode())
 
+    def grant(resp: Response) -> Response:
+        resp.set_cookie(COOKIE, expected, max_age=COOKIE_MAX_AGE, path="/", httponly=True, samesite="strict",
+                        secure=False)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    async def owner(request: Request) -> bool:
+        return auto is not None and await asyncio.to_thread(auto.grants, peer(request))
+
     @app.middleware("http")
     async def guard(request: Request, call_next):
-        if request.url.path in OPEN_PATHS:
-            resp = await call_next(request)
-        elif not authed(request):
+        path = request.url.path
+        ok = authed(request)
+        auto_granted = False
+        if not ok and await owner(request):
+            ok = auto_granted = True
+        if path in OPEN_PATHS:
+            if auto_granted and request.method == "GET":
+                resp = RedirectResponse("/", status_code=303)
+            else:
+                resp = await call_next(request)
+        elif not ok:
             if wants_html(request):
                 resp = RedirectResponse("/login", status_code=303)
             else:
@@ -169,33 +230,57 @@ def install_auth(app: FastAPI, token: str, limiter: FailLimiter | None = None) -
                                 headers={"Allow": "GET, HEAD"})
         else:
             resp = await call_next(request)
+        if auto_granted:
+            grant(resp)
         for k, v in SECURITY_HEADERS.items():
             resp.headers.setdefault(k, v)
         return resp
 
+    async def form_value(request: Request, name: str) -> str:
+        body = await request.body()
+        if len(body) > MAX_FORM_BYTES:
+            return ""
+        if not request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+            return ""
+        return (parse_qs(body.decode("utf-8", "replace")).get(name) or [""])[0].strip()
+
+    async def failed(client: str, msg: str, body: str) -> Response:
+        limiter.fail(client)
+        await asyncio.sleep(FAIL_DELAY)
+        return page(body, msg, status=401)
+
     @app.get("/login", include_in_schema=False)
-    def login_form(request: Request) -> Response:
+    def login_page(request: Request) -> Response:
         if authed(request):
             return RedirectResponse("/", status_code=303)
-        return login_page()
+        return page(LOGIN_BODY)
+
+    @app.get("/login/token", include_in_schema=False)
+    def token_page(request: Request) -> Response:          # hidden fallback, not linked from the UI
+        if authed(request):
+            return RedirectResponse("/", status_code=303)
+        return page(TOKEN_BODY)
 
     @app.post("/login", include_in_schema=False)
     async def login(request: Request) -> Response:
-        client = request.client.host if request.client else "?"
+        client = peer(request) or "?"
+        if not same_origin(request):
+            return page(TOKEN_BODY, "Anfrage abgelehnt (fremde Herkunft).", status=403)
         if limiter.blocked(client):
-            return login_page("Zu viele Fehlversuche. Bitte später nochmal.", status=429)
-        body = await request.body()
-        submitted = ""
-        if len(body) <= MAX_FORM_BYTES:
-            ctype = request.headers.get("content-type", "")
-            if ctype.startswith("application/x-www-form-urlencoded"):
-                submitted = (parse_qs(body.decode("utf-8", "replace")).get("token") or [""])[0].strip()
+            return page(TOKEN_BODY, "Zu viele Fehlversuche. Bitte später nochmal.", status=429)
+        submitted = await form_value(request, "token")
         if not submitted or not hmac.compare_digest(submitted.encode(), token.encode()):
-            limiter.fail(client)
-            await asyncio.sleep(FAIL_DELAY)
-            return login_page("Falscher Schlüssel.", status=401)
-        resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie(COOKIE, expected, max_age=COOKIE_MAX_AGE, path="/", httponly=True, samesite="strict",
-                        secure=False)
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
+            return await failed(client, "Falscher Schlüssel.", TOKEN_BODY)
+        return grant(RedirectResponse("/", status_code=303))
+
+    @app.post("/login/link", include_in_schema=False)
+    async def login_link(request: Request) -> Response:
+        client = peer(request) or "?"
+        if not same_origin(request):
+            return page(LOGIN_BODY, "Anfrage abgelehnt (fremde Herkunft).", status=403)
+        if limiter.blocked(client):
+            return page(LOGIN_BODY, "Zu viele Fehlversuche. Bitte später nochmal.", status=429)
+        nonce = await form_value(request, "nonce")
+        if links is None or not await asyncio.to_thread(links.consume, nonce):
+            return await failed(client, "Der Login-Link ist ungültig, abgelaufen oder schon benutzt.", LOGIN_BODY)
+        return grant(RedirectResponse("/", status_code=303))
