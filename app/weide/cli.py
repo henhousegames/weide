@@ -62,6 +62,8 @@ def cmd_export_static(a: argparse.Namespace) -> None:
     print(json.dumps(res, ensure_ascii=False))
     if res["missing"]:
         print(f"warning: {len(res['missing'])} media files missing", file=sys.stderr)
+    if res["leaks"]:
+        _die(f"leak check failed ({len(res['leaks'])} hits): " + "; ".join(res["leaks"][:10]), code=1)
 
 
 def build_parser() -> argparse.ArgumentParser:
