@@ -1,0 +1,30 @@
+[project]
+name = "weide"
+version = "0.2.0"
+description = "Backend for the Weide in-world social network: SQLite store, API server and static export"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.165.0",
+    "uvicorn==0.54.0",
+    "pydantic==2.14.4",
+    "httpx==0.28.1",
+]
+
+[project.scripts]
+weide = "weide.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app/weide"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

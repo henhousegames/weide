@@ -1,0 +1,20 @@
+# local state and secrets (never commit)
+private/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.*
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# build / export output
+build/
+dist/
+out/
