@@ -9,10 +9,11 @@ read-only scope `review` (see the service's docs/API.md, "Review (private previe
                      output: {mime, width, height, fps, duration_s, has_audio, sha256},   (images: fps/duration_s null)
                      media: {output: "/api/v1/review/generations/<id>/media/output", poster: ".../media/poster"},
                      publication: null | {public_id, character, caption, approved_at, revoked_at},
-                     lab_path: "/#/g/<id>",
+                     lab_path: "/#/g/<id>", credits: [{kind, text, model, license: {id, url}}] (optional),
                      compose: {parents: [<generation id> | {...}]}   (task "compose" only)}],
           "next_since": <finished_at of the last item>, "has_more": bool}
-  GET <media url> (Range supported) -> the output video/image or the poster.
+  GET <media url> (Range supported) -> the output video/image/audio or the poster.
+Audio-only items (task "audio", output mime audio/*, no poster) get output_kind "audio".
 
 Ordered by (finished_at, id); `next_since` is passed back as `since` and pages are fetched while `has_more`.
 `status` is not sent (the default is both listable statuses). The cursor follows finished_at, so a later
@@ -35,6 +36,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from . import config
+from .generation import CREDITS_KEY, sanitize_credits
 
 GENERATIONS_PATH = "/api/v1/review/generations"
 DRAFT_STATUS = "ready_for_review"
@@ -111,7 +113,7 @@ class ReviewItem:
     prompt: str | None
     created_at: str | None
     finished_at: str | None
-    output_kind: str | None            # video | image | None
+    output_kind: str | None            # video | image | audio | None
     output_url: str | None
     poster_url: str | None
     publication: Publication | None
@@ -122,6 +124,7 @@ class ReviewItem:
     has_audio: bool | None = None
     fps: float | None = None
     provenance: dict = field(default_factory=dict)   # start_source, labels + parent refs (review_start_source_sim)
+    credits: list = field(default_factory=list)      # sanitized `credits` (absent/null: [])
 
     @property
     def visible(self) -> bool:
@@ -142,6 +145,7 @@ class ReviewItem:
         out_url, poster = _str(media.get("output")), _str(media.get("poster"))
         mime = _str(output.get("mime")) or ""
         kind = ("video" if mime.startswith("video/") else "image" if mime.startswith("image/")
+                else "audio" if mime.startswith("audio/") or (not mime and d.get("task") == "audio")
                 else "image" if d.get("task") == "t2i" else "video" if out_url else None)
         labels = d.get("labels") if isinstance(d.get("labels"), dict) else {}
         lab_path = _str(d.get("lab_path"))
@@ -157,7 +161,7 @@ class ReviewItem:
                    width=_num(output.get("width"), int), height=_num(output.get("height"), int),
                    duration_s=_num(output.get("duration_s"), float), fps=_num(output.get("fps"), float),
                    has_audio=output.get("has_audio") if isinstance(output.get("has_audio"), bool) else None,
-                   provenance=provenance)
+                   provenance=provenance, credits=sanitize_credits(d.get(CREDITS_KEY)))
 
 
 def _num(v: Any, typ: type) -> Any:
