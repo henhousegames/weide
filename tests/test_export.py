@@ -150,11 +150,14 @@ def test_unpublished_and_private_data_stay_out(exported, tmp_path):
     assert not (out / "data/posts/999.json").exists()
     blob = "\n".join(f.read_text() for f in (out / "data").rglob("*.json"))
     for s in ("DRAFT-SECRET-CAPTION", "APPROVED-NOT-YET", "generation:run-0042", "PRIVATE-STYLE-GUIDANCE",
-              "EXAMPLE_KEY_HASH", "/home/", "/Users/", "workflow_path", "\"seed\":", "media_path"):
+              "EXAMPLE_KEY_HASH", "/home/", "/Users/", "workflow_path", "media_path"):
         assert s not in blob, s
     card = json.loads((out / f"data/posts/{gen}.json").read_text())
     assert card["generation"] == {"public_id": "g1a2b3", "model_label": "Model X 1.0"}
     assert card["source"] is None
+    assert json.loads((out / "data/gen/g1a2b3.json").read_text()) == {
+        "public_id": "g1a2b3", "post_id": gen, "model_label": "Model X 1.0", "seed": 7}
+    assert res["generations"] == 1
     assert json.loads((out / "data/meta.json").read_text())["posts"] == 42
     top = json.loads((out / "data/top/day-2026-11-17.json").read_text())
     st = [i for i in top["items"] if i["id"] == story][0]

@@ -8,7 +8,9 @@ makes static/js/api.js read these files.
 
 Only published posts are exported (the server hides everything else). Writer-facing fields stay out:
 file paths (media_path, raw moment video/poster), dev CLI hints (top `commands`, meta `cli`), moment
-`why` strings that are pipeline ids. `leak_check()` scans the result for paths, secrets and run ids.
+`why` strings that are pipeline ids. Generation posts additionally get data/gen/<public_id>.json, the
+sanitized public summary from generation.py (all settings and the prompt; no paths, keys, hosts or run
+ids). `leak_check()` scans the result for paths, secrets and run ids (summaries with their own rules).
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
+from .generation import PUBLIC_ID, summary_leaks
 from .media import MediaError, avatar_file, media_file, thumb_file
 
 URL = re.compile(r"^/(media|thumb/(\d+)|avatar)/(.+)$")
@@ -153,7 +156,12 @@ def leak_check(out: Path) -> list[str]:
     out = Path(out)
     hits: list[str] = []
     for f in sorted((out / "data").rglob("*.json")):
-        _scan(json.loads(f.read_text(encoding="utf-8")), str(f.relative_to(out)), hits)
+        rel = f.relative_to(out)
+        data = json.loads(f.read_text(encoding="utf-8"))
+        if rel.parts[:2] == ("data", "gen"):
+            summary_leaks(data, str(rel), hits)          # prompts/settings are public here, paths etc. not
+        else:
+            _scan(data, str(rel), hits)
     for f in [out / "index.html", *sorted((out / "static").rglob("*"))]:
         if f.is_file() and f.suffix in (".html", ".js", ".css"):
             text = f.read_text(encoding="utf-8")
@@ -200,7 +208,7 @@ def _export(out: Path, client: Any, con: sqlite3.Connection, link: bool) -> dict
     # data/ is rebuilt from scratch so posts that are no longer published do not linger
     shutil.rmtree(out / "data", ignore_errors=True)
     files = _Files(out, con, link)
-    stats: dict[str, Any] = {"posts": 0, "accounts": 0, "days": 0, "weeks": 0}
+    stats: dict[str, Any] = {"posts": 0, "accounts": 0, "days": 0, "weeks": 0, "generations": 0}
 
     meta = get("/api/meta")
     meta["static"] = True
@@ -217,6 +225,13 @@ def _export(out: Path, client: Any, con: sqlite3.Connection, link: bool) -> dict
     for pid in published:
         _write(out / f"data/posts/{pid}.json", _clean(get(f"/api/posts/{pid}"), files))
         stats["posts"] += 1
+
+    gens = [r[0] for r in con.execute("SELECT public_id FROM posts WHERE status='published' AND public_id IS NOT NULL "
+                                      "AND generation_json IS NOT NULL ORDER BY id")]
+    for gid in gens:
+        if PUBLIC_ID.match(gid):
+            _write(out / f"data/gen/{gid}.json", get(f"/api/generations/{gid}"))
+            stats["generations"] += 1
 
     accounts = get("/api/accounts")
     _write(out / "data/accounts.json", _clean(accounts, files))

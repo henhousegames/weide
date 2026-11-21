@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import bump_bucket, comment_counts, connect, jload, reaction_totals, resolve_post
+from .generation import PUBLIC_ID, public_summary
 from .media import MediaError, avatar_file, media_exists, media_file, media_kind, thumb_file
 from .ranking import combine, engagement, engagement_score, iso_week, today, top, window
 
@@ -206,6 +207,19 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             bump_bucket(con, pid, body.type, 1, "web")
             con.commit()
             return {"reactions": reaction_totals(con, [pid])[pid]}
+
+    @app.get("/api/generations/{public_id}")
+    def generation(public_id: str) -> dict:
+        """Public summary of how a published post was generated (all settings, nothing private)."""
+        if not PUBLIC_ID.match(public_id):
+            raise HTTPException(404, f"no generation {public_id!r}")
+        with db() as con:
+            row = con.execute(f"SELECT p.id, p.public_id, p.generation_json FROM posts p WHERE p.public_id = ? "
+                              f"AND {PUBLISHED}", (public_id,)).fetchone()
+            summary = public_summary(con, row) if row else None
+        if summary is None:
+            raise HTTPException(404, f"no generation {public_id!r}")
+        return summary
 
     @app.get("/api/accounts")
     def accounts(kind: str | None = None) -> dict:
