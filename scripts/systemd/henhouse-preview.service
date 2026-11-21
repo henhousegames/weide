@@ -1,0 +1,25 @@
+# henhouse private preview (systemd user unit): `weide serve --preview`, read-only, login required.
+# Install and settings: docs/PREVIEW.md. Adjust WorkingDirectory/ExecStart if the checkout lives elsewhere.
+# Hosts, port and the read-only review key come from the private EnvironmentFile (never committed).
+# Non-loopback hosts are bound with IP_FREEBIND, so the unit may start before the Tailscale address is up.
+[Unit]
+Description=henhouse private preview (read-only, login required)
+Documentation=file://%h/develop/weide/docs/PREVIEW.md
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/henhouse/preview.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/develop/weide
+ExecStart=%h/develop/weide/.venv/bin/weide serve --preview
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
