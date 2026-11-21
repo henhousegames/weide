@@ -47,7 +47,7 @@ from starlette.background import BackgroundTask
 
 from . import config
 from .db import parse_time
-from .generation import model_short_label
+from .generation import model_short_label, start_source_sim
 from .preview_auth import install_auth, load_key
 from .preview_login import LinkStore, OwnerAutoLogin, owner_logins
 from .review import DRAFT_STATUS, GEN_ID, LAB_PATH, SLUG, ReviewClient, ReviewError, ReviewItem, ReviewSettings
@@ -299,7 +299,14 @@ def classify(it: ReviewItem, published_ids: set[str]) -> str | None:
     return "draft" if it.status == DRAFT_STATUS else None
 
 
-def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request: Request) -> dict:
+def item_start_source_sim(it: ReviewItem, items: dict[str, ReviewItem]) -> bool:
+    """The item or any parent (looked up in the feed by generation id, recursively) is labelled
+    start_source "isaac-sim"."""
+    return start_source_sim(it.provenance, lambda gid: items[gid].provenance if gid in items else None)
+
+
+def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request: Request,
+                 sim: bool = False) -> dict:
     pub = it.publication if state == "approved" else None
     slugs = [s for s in ((pub.character if pub else None), it.labels.get("character")) if isinstance(s, str)]
     account = next((accounts[s] for s in slugs if s in accounts), STUDIO)
@@ -324,7 +331,7 @@ def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request:
                     "lab_url": lab_url(request, it.id, it.lab_path), "model": model, "task": it.task, "prompt": it.prompt,
                     "caption_is_fallback": not own_caption, "created_at": it.created_at, "finished_at": it.finished_at,
                     "width": it.width, "height": it.height, "fps": it.fps, "duration_s": it.duration_s,
-                    "has_audio": it.has_audio},
+                    "has_audio": it.has_audio, "start_source_sim": sim},
     }
 
 
@@ -350,7 +357,7 @@ def preview_cards(store: ReviewStore, con: sqlite3.Connection, request: Request)
     slugs = {s for it, _ in shown for s in ((it.publication.character if it.publication else None),
                                             it.labels.get("character")) if isinstance(s, str)}
     accounts = _accounts(con, slugs)
-    cards = [preview_card(it, st, accounts, request) for it, st in shown]
+    cards = [preview_card(it, st, accounts, request, item_start_source_sim(it, store.items)) for it, st in shown]
     cards.sort(key=_ts, reverse=True)           # newest first, like the public feed
     return cards
 

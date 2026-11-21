@@ -931,3 +931,32 @@ def test_cli_preview_login_link(tmp_path, capsys, private_config, monkeypatch):
     monkeypatch.setenv("HENHOUSE_PREVIEW_HOSTS", "127.0.0.1")
     cli.main(["preview-login-link"])
     assert capsys.readouterr().out.startswith("http://127.0.0.1:18510/login#link=")
+
+
+# --- start source ("Startbild aus eigener Simulation") -------------------------------------------------
+
+def test_preview_cards_show_start_source_sim(henhouse_db, monkeypatch):
+    monkeypatch.setattr(preview_auth, "FAIL_DELAY", 0)
+    items = [
+        gen("g_sim", labels={"start_source": "isaac-sim"}),
+        gen("g_other", labels={"start_source": "blender"}),
+        gen("g_plain"),
+        gen("g_beat", "published", labels={}, compose=None, finished_at="2026-11-19T09:00:00Z"),
+        gen("g_cut1", task="compose", compose={"parents": ["g_simbeat"]}),          # parent of a parent
+        gen("g_simbeat", labels={"start_source": "isaac-sim"}, finished_at="2026-11-19T08:00:00Z"),
+        gen("g_cut2", task="compose", compose={"parents": ["g_cut1"]}, publication=pub("pubCUT2")),
+        gen("g_cut3", task="compose", compose={"parents": ["g_beat", "g_unknown"]}),
+    ]
+    a = preview.create_preview_app(henhouse_db, token=TOKEN, settings=ReviewSettings(BASE, REVIEW_KEY),
+                                   transport=httpx.MockTransport(FakeService(items)), poll_interval=None)
+    asyncio.run(a.state.store.poll_once())
+    c = TestClient(a, base_url="http://preview-host.example:18510")
+    assert login(c).status_code == 303
+    ids = by_id(c.get("/api/feed?limit=100").json()["items"])
+    sim = {k.removeprefix("vs-"): v["preview"]["start_source_sim"] for k, v in ids.items() if str(k).startswith("vs-")}
+    assert sim == {"g_sim": True, "g_other": False, "g_plain": False, "g_cut1": True, "g_simbeat": True,
+                   "g_cut2": True, "g_cut3": False}
+    assert ids["vs-g_cut2"]["preview"]["state"] == "approved"
+    assert c.get("/api/posts/vs-g_cut1").json()["preview"]["start_source_sim"] is True
+    js = (preview.PREVIEW_STATIC / "preview.js").read_text()
+    assert "Startbild aus eigener Simulation" in js and "start_source_sim" in js

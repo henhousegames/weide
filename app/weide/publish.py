@@ -31,6 +31,9 @@ so a rerun never duplicates; caption/character/summary changes update it (keepin
 exist. Media go to <media root>/gen/<public_id>.<ext> (sha256 from the list verified), a 540 px poster to
 <thumb root>/540/gen/<public_id>.jpg: the service poster (scaled with ffmpeg, or kept as is when it is a
 JPEG and ffmpeg is missing), else a frame of the media (ffmpeg; skipped without it).
+Start source: when the list item or the summary, or any parent of a compose (`parents`, `compose.parents`,
+`composition.segments`, recursively), has the label `start_source: "isaac-sim"`, the record gets
+`start_source_sim: true` (generation.start_source_sim); the public card shows "Startbild aus eigener Simulation".
 Inputs: only inputs the summary marks `published: true` with a `source_public_id` are kept, as a
 reference to that publication's own post (shown at export only if that post is published here);
 every other input is a "privater Input". Input media are not downloaded (they are posts of their own).
@@ -58,7 +61,8 @@ import httpx
 
 from . import config
 from .db import get_meta, jdump, jload, now_iso, parse_time, set_meta, upsert_post
-from .generation import PRIVATE_INPUT, PUBLIC_ID, REDACTED, model_short_label, sanitize
+from .generation import (PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, model_short_label, sanitize,
+                         start_source_sim)
 
 PUBLICATIONS_PATH = "/api/v1/publications"
 CURSOR_KEY = "publications_since"  # meta key: next_since of the last fully successful pull
@@ -131,6 +135,7 @@ class Publication:
     media_url: str
     summary_url: str
     poster_url: str | None = None
+    start_source_sim: bool = False     # the item (or a parent) has labels.start_source == "isaac-sim"
 
     @property
     def kind(self) -> str:
@@ -167,7 +172,8 @@ class Publication:
         return cls(public_id=pid, character=str(d["character"]), caption=str(d.get("caption") or ""),
                    approved_at=str(d["approved_at"]), mime=mime, sha256=str(d["sha256"]).lower(), media_url=url,
                    summary_url=summary or f"{PUBLICATIONS_PATH}/{pid}/summary",
-                   poster_url=(str(d["poster_url"]) if d.get("poster_url") else None))
+                   poster_url=(str(d["poster_url"]) if d.get("poster_url") else None),
+                   start_source_sim=start_source_sim(d))
 
 
 class ServiceClient:
@@ -306,7 +312,8 @@ def _input(x: Any) -> dict:
 
 def public_record(summary: dict, pub: Publication) -> dict:
     """generation_json for the post: the service summary sanitized again, ids/URLs that belong to the
-    service removed, inputs reduced to public references, model_label filled from the model."""
+    service removed, inputs reduced to public references, model_label filled from the model,
+    start_source_sim set when the item, the summary or any parent says so (only true is stored)."""
     inputs = summary.get("inputs")
     s = sanitize({k: v for k, v in summary.items() if k not in SUMMARY_DROP and k != "inputs"}) or {}
     if inputs is not None:
@@ -316,6 +323,10 @@ def public_record(summary: dict, pub: Publication) -> dict:
         s["model_label"] = label
     else:
         s.pop("model_label", None)
+    if pub.start_source_sim or start_source_sim(summary):
+        s[START_SOURCE_KEY] = True
+    else:
+        s.pop(START_SOURCE_KEY, None)
     return s
 
 

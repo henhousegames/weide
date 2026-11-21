@@ -22,7 +22,7 @@ import ast
 import posixpath
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 from .db import jload
 
@@ -54,6 +54,61 @@ def model_short_label(model: Any) -> str | None:
             if label:
                 return label
     return None
+
+
+# --- start source -----------------------------------------------------------------------------------
+
+START_SOURCE_LABEL = "start_source"
+START_SOURCE_SIM = "isaac-sim"           # the only value that counts (exact match)
+START_SOURCE_NOTE = "Startbild aus eigener Simulation"
+START_SOURCE_KEY = "start_source_sim"    # boolean in generation_json / the public card and summary
+# where a generation record (publication item, public summary, review item) names its parents
+_PARENT_KEYS = ("parents", "compose", "composition", "segments", "effective")
+_PARENT_ID_KEYS = ("generation_id", "id", "source")
+_MAX_DEPTH = 32
+
+
+def _sim_value(d: dict) -> bool:
+    labels = d.get("labels")
+    return ((isinstance(labels, dict) and labels.get(START_SOURCE_LABEL) == START_SOURCE_SIM)
+            or d.get(START_SOURCE_LABEL) == START_SOURCE_SIM)
+
+
+def start_source_sim(record: Any, lookup: Callable[[str], Any] | None = None) -> bool:
+    """True when a generation, or any parent of a compose (through any chain), carries the label
+    `start_source: "isaac-sim"` (start frame/references from our own simulation).
+
+    `record` is a raw service object: a publication item, a public summary or a review item. Labels are
+    read from `labels.start_source` (or a flat `start_source`); parents from `parents`, `compose.parents`,
+    `effective.parents` and `composition.segments` (also nested `models`/`parents` of a segment). A
+    parent given only by its generation id is resolved with `lookup(id)` (the review feed) when given."""
+    seen: set[str] = set()
+
+    def walk(obj: Any, depth: int) -> bool:
+        if depth > _MAX_DEPTH:
+            return False
+        if isinstance(obj, str):
+            if lookup is None or obj in seen:
+                return False
+            seen.add(obj)
+            return walk(lookup(obj), depth + 1)
+        if isinstance(obj, (list, tuple)):
+            return any(walk(x, depth + 1) for x in obj)
+        if not isinstance(obj, dict):
+            return False
+        if _sim_value(obj):
+            return True
+        for k in _PARENT_KEYS:
+            if k in obj and walk(obj[k], depth + 1):
+                return True
+        if depth and lookup is not None:          # a parent entry: also look its generation up by id
+            gid = next((obj[k] for k in _PARENT_ID_KEYS if isinstance(obj.get(k), str)), None)
+            if gid and walk(gid, depth + 1):
+                return True
+        return False
+
+    return walk(record, 0)
+
 
 _DROP_EXACT = {
     "path", "paths", "file", "files", "filename", "filenames", "filepath", "dir", "directory", "cwd", "log", "logs",
@@ -171,6 +226,10 @@ def public_summary(con: sqlite3.Connection, row: sqlite3.Row) -> dict | None:
     label = model_short_label(gen.get("model_label")) or model_short_label(gen.get("model"))
     if label:
         out["model_label"] = label
+    if gen.get(START_SOURCE_KEY) is True or start_source_sim(gen):
+        out[START_SOURCE_KEY] = True
+    else:
+        out.pop(START_SOURCE_KEY, None)
     if raw_inputs is not None:
         items = raw_inputs if isinstance(raw_inputs, list) else [raw_inputs]
         out["inputs"] = [public_input(con, x) for x in items]

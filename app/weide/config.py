@@ -104,4 +104,4 @@ CONTROLLER_TYPES = ("agent", "human")
 WORLD_BY_KIND = {"animal": "weide", "human": "menschen", "robot": "roboter"}
 
 # Card fields of a generation summary that may become public (whitelist; see export_static.py).
-PUBLIC_GENERATION_KEYS = ("model_label",)
+PUBLIC_GENERATION_KEYS = ("model_label", "start_source_sim")

@@ -153,3 +153,36 @@ def test_leak_check_on_planted_summary(tmp_path):
     for s in ("'workflow_path'", "/home/EXAMPLE", "10.1.2.3", "generation:run-1", "'api_key'"):
         assert s in hits, s
     assert "monkey" not in hits and "'seed'" not in hits and "'key'" not in hits
+
+
+# --- start source ("Startbild aus eigener Simulation") -------------------------------------------------
+
+from weide.generation import start_source_sim  # noqa: E402
+
+
+def test_start_source_direct_label_only_exact_value():
+    assert start_source_sim({"labels": {"start_source": "isaac-sim"}})
+    for other in ({"labels": {}}, {}, {"labels": {"start_source": "Isaac-Sim"}}, {"labels": {"start_source": "blender"}},
+                  {"labels": {"start_source": ["isaac-sim"]}}, {"labels": {"spec": "isaac-sim"}}, {"labels": None}):
+        assert not start_source_sim(other), other
+
+
+def test_start_source_from_nested_compose_parents():
+    # summary shape: composition.segments[], a segment that is itself a compose names its own parents
+    summary = {"labels": {"story": "h001"}, "composition": {"segments": [
+        {"segment": 1, "model": "LTX-2.5"},
+        {"segment": 2, "models": ["Wan"], "parents": [{"labels": {"start_source": "isaac-sim"}}]}]}}
+    assert start_source_sim(summary)
+    summary["composition"]["segments"][1]["parents"][0]["labels"]["start_source"] = "other"
+    assert not start_source_sim(summary)
+
+
+def test_start_source_parent_ids_resolved_recursively():
+    feed = {"g_a": {"labels": {}, "compose": {"parents": ["g_b"]}},
+            "g_b": {"labels": {}, "compose": {"parents": [{"generation_id": "g_c"}]}},
+            "g_c": {"labels": {"start_source": "isaac-sim"}},
+            "g_loop": {"labels": {}, "compose": {"parents": ["g_loop", "g_missing"]}}}
+    look = feed.get
+    assert start_source_sim(feed["g_a"], look) and start_source_sim(feed["g_b"], look)
+    assert not start_source_sim(feed["g_a"])                # ids alone say nothing without the feed
+    assert not start_source_sim(feed["g_loop"], look)       # cycles and unknown ids end quietly

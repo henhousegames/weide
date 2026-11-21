@@ -9,7 +9,8 @@ read-only scope `review` (see the service's docs/API.md, "Review (private previe
                      output: {mime, width, height, fps, duration_s, has_audio, sha256},   (images: fps/duration_s null)
                      media: {output: "/api/v1/review/generations/<id>/media/output", poster: ".../media/poster"},
                      publication: null | {public_id, character, caption, approved_at, revoked_at},
-                     lab_path: "/#/g/<id>"}],
+                     lab_path: "/#/g/<id>",
+                     compose: {parents: [<generation id> | {...}]}   (task "compose" only)}],
           "next_since": <finished_at of the last item>, "has_more": bool}
   GET <media url> (Range supported) -> the output video/image or the poster.
 
@@ -43,6 +44,7 @@ PAGE_LIMIT = 500                  # the API's maximum page size
 MAX_PAGES = 1000                  # guard against a cursor that never ends
 LAB_PATH = re.compile(r"^/#/g/[A-Za-z0-9_-]{1,80}$")
 GEN_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+PROVENANCE_KEYS = ("compose", "parents", "effective")   # where a compose names its parents (kept for the note)
 SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -118,6 +120,7 @@ class ReviewItem:
     duration_s: float | None = None
     has_audio: bool | None = None
     fps: float | None = None
+    provenance: dict = field(default_factory=dict)   # labels + parent references, for start_source_sim()
 
     @property
     def visible(self) -> bool:
@@ -141,6 +144,7 @@ class ReviewItem:
                 else "image" if d.get("task") == "t2i" else "video" if out_url else None)
         labels = d.get("labels") if isinstance(d.get("labels"), dict) else {}
         lab_path = _str(d.get("lab_path"))
+        provenance = {"labels": labels, **{k: d[k] for k in PROVENANCE_KEYS if d.get(k) is not None}}
         return cls(id=gid, status=str(d.get("status") or ""), task=_str(d.get("task")), model=model_id,
                    model_label=model_label, labels=labels, prompt=_str(d.get("prompt_original")),
                    created_at=_str(d.get("created_at")), finished_at=_str(d.get("finished_at")),
@@ -149,7 +153,8 @@ class ReviewItem:
                    lab_path=lab_path if lab_path and LAB_PATH.match(lab_path) else None,
                    width=_num(output.get("width"), int), height=_num(output.get("height"), int),
                    duration_s=_num(output.get("duration_s"), float), fps=_num(output.get("fps"), float),
-                   has_audio=output.get("has_audio") if isinstance(output.get("has_audio"), bool) else None)
+                   has_audio=output.get("has_audio") if isinstance(output.get("has_audio"), bool) else None,
+                   provenance=provenance)
 
 
 def _num(v: Any, typ: type) -> Any:

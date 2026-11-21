@@ -506,3 +506,62 @@ def test_export_today_defaults_to_newest_post(env, tmp_path, monkeypatch):
     assert res["today"] == "2026-11-17"                              # approved_at of the only post
     assert export_static(tmp_path / "b", dbp, today="2026-11-20")["today"] == "2026-11-20"
     assert config.TODAY_OVERRIDE is None
+
+
+# --- start source ("Startbild aus eigener Simulation") -------------------------------------------------
+
+def _export_gen(env, tmp_path):
+    con, _, _, _, dbp = env
+    con.commit()
+    out = export_static(tmp_path / "site", dbp, today="2026-11-17")
+    assert out["leaks"] == []
+    feed = json.loads((tmp_path / "site/data/feed.json").read_text())["items"]
+    card = next(i for i in feed if (i.get("generation") or {}).get("public_id") == PID)
+    return card["generation"], json.loads((tmp_path / f"site/data/gen/{PID}.json").read_text())
+
+
+def _record(con):
+    return json.loads(con.execute("SELECT generation_json FROM posts WHERE public_id=?", (PID,)).fetchone()[0])
+
+
+def test_start_source_direct_label_on_item_reaches_card_and_gen(env, tmp_path):
+    con, svc, *_ = env
+    svc.pubs = [{**publication(), "labels": {"start_source": "isaac-sim"}}]
+    assert run(con, svc)["new"] == 1
+    assert _record(con)["start_source_sim"] is True
+    card_gen, gen = _export_gen(env, tmp_path)
+    assert card_gen == {"public_id": PID, "model_label": "Model X 1.0", "start_source_sim": True}
+    assert gen["start_source_sim"] is True
+
+
+def test_start_source_parent_only_in_nested_compose(env, tmp_path):
+    con, svc, *_ = env
+    svc.summaries[PID] = {**SUMMARY, "task": "compose", "labels": {"story": "h001"}, "composition": {"segments": [
+        {"segment": 1, "model": "Model X", "published": False},
+        {"segment": 2, "model": "Model Y", "parents": [
+            {"model": "Model Z", "labels": {"start_source": "isaac-sim", "note": "/home/EXAMPLE/scene.usd"}}]}]}}
+    run(con, svc)
+    card_gen, gen = _export_gen(env, tmp_path)
+    assert card_gen["start_source_sim"] is True and gen["start_source_sim"] is True
+    assert "/home/" not in json.dumps(gen)
+
+
+@pytest.mark.parametrize("labels", [None, {}, {"start_source": "blender"}, {"start_source": "Isaac Sim"}])
+def test_start_source_absent_or_other_value_gives_no_note(env, tmp_path, labels):
+    con, svc, *_ = env
+    if labels is not None:
+        svc.pubs = [{**publication(), "labels": labels}]
+        svc.summaries[PID] = {**SUMMARY, "labels": labels, "parents": [{"labels": labels}]}
+    run(con, svc)
+    assert "start_source_sim" not in _record(con)
+    card_gen, gen = _export_gen(env, tmp_path)
+    assert "start_source_sim" not in card_gen and "start_source_sim" not in gen
+
+
+def test_start_source_flag_is_dropped_when_label_goes_away(env):
+    con, svc, *_ = env
+    svc.pubs = [{**publication(), "labels": {"start_source": "isaac-sim"}}]
+    run(con, svc)
+    svc.pubs = [{**publication(), "approved_at": "2026-11-18T17:00:00+00:00"}]
+    assert run(con, svc, full=True)["updated"] == 1
+    assert "start_source_sim" not in _record(con)
