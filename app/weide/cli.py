@@ -134,7 +134,11 @@ def cmd_pull_approved(a: argparse.Namespace) -> None:
         _die(str(e))
     con = connect(a.db)
     try:
-        res = pull_approved(con, settings, dry_run=a.dry_run, full=a.full, log=lambda s: print(s, file=sys.stderr))
+        full = a.full
+        if not full and a.auto_full:
+            from .deploy import full_pull_due
+            full = full_pull_due(con)
+        res = pull_approved(con, settings, dry_run=a.dry_run, full=full, log=lambda s: print(s, file=sys.stderr))
     finally:
         con.close()
     print(json.dumps(res, ensure_ascii=False))
@@ -143,10 +147,20 @@ def cmd_pull_approved(a: argparse.Namespace) -> None:
 
 
 def cmd_deploy(a: argparse.Namespace) -> None:
+    from . import config
     from .deploy import deploy
     from .publish import PublishError
+    if a.full and a.incremental:
+        _die("--full and --incremental exclude each other")
+    full = True if a.full else False if a.incremental else None       # None: daily full pull when due
+    if full is None:
+        override = (config.env("FULL_PULL") or "").strip().lower()
+        if override in ("1", "true", "yes"):
+            full = True
+        elif override in ("0", "false", "no"):
+            full = False
     try:
-        res = deploy(Path(a.site), a.db, pull=not a.skip_pull, full=a.full, today=a.today,
+        res = deploy(Path(a.site), a.db, pull=not a.skip_pull, full=full, today=a.today,
                      log=lambda s: print(s, file=sys.stderr))
     except PublishError as e:
         _die(str(e))
@@ -239,13 +253,16 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("pull-approved", help="publish the generations approved in the generation service; idempotent")
     s.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     s.add_argument("--full", action="store_true", help="ignore the stored cursor and reconcile every publication")
+    s.add_argument("--auto-full", action="store_true", help="full when the daily full pull is due (as `deploy` does)")
     _db_arg(s)
     s.set_defaults(fn=cmd_pull_approved)
 
     s = sub.add_parser("deploy", help="pull-approved, export-static into a site dir, leak check, report changes (no git)")
     s.add_argument("site", nargs="?", default="site", help="site directory (default: site)")
     s.add_argument("--skip-pull", action="store_true", help="only re-export the current database")
-    s.add_argument("--full", action="store_true", help="pull: ignore the stored cursor and reconcile every publication")
+    s.add_argument("--full", action="store_true", help="pull: force a full pull (default: full once per 24 h, "
+                   "else incremental; env HENHOUSE_FULL_PULL=1|0 forces either)")
+    s.add_argument("--incremental", action="store_true", help="pull: never a full pull this time")
     s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages (default: date of the newest published post)")
     _db_arg(s)
     s.set_defaults(fn=cmd_deploy)

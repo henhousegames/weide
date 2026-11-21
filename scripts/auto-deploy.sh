@@ -6,8 +6,9 @@
 #                                     commits, pushes or renames
 #
 # Steps: lock (no overlapping runs) -> repo must be on a clean main that fast-forwards to origin/main
-# -> `weide deploy` (pull-approved + export into site/ + leak check) -> until the one-time switch is
-# done, stop here (no commit, no push) while the export has no published generation post
+# -> `weide deploy` (pull-approved + export into site/ + leak check; the pull is incremental, and a full
+# one once per 24 h: see app/weide/deploy.py, HENHOUSE_FULL_PULL=1|0 forces either)
+# -> until the one-time switch is done, stop here (no commit, no push) while the export has no published generation post
 # -> if site/ changed: commit + push
 # -> one-time switch (rename repo weide -> henhouse, Pages source = GitHub Actions, run pages.yml,
 # wait until the site serves the newest published generation), guarded by a marker in private/.
@@ -26,7 +27,7 @@ DRY_RUN=0
 case "${1:-}" in
   --dry-run) DRY_RUN=1 ;;
   "") ;;
-  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
   *) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
 esac
 
@@ -73,9 +74,9 @@ sync_main() {
 build_site() {
   SITE_CHANGED=0
   if [ "$DRY_RUN" = 1 ]; then
-    log "dry-run: uv run weide pull-approved --dry-run"
-    uv run --quiet weide pull-approved --dry-run 2>/dev/null \
-      | jq -c '{new, updated, unchanged, revoked, failed: (.failed | length)}' \
+    log "dry-run: uv run weide pull-approved --dry-run --auto-full"
+    uv run --quiet weide pull-approved --dry-run --auto-full 2>/dev/null \
+      | jq -c '{full, new, updated, unchanged, revoked, failed: (.failed | length)}' \
       || die "pull-approved --dry-run failed"
     log "dry-run: would run: uv run weide deploy (export into site/, leak check)"
     return
@@ -87,7 +88,7 @@ build_site() {
     rm -f "$out"
     die "weide deploy failed; nothing committed"
   fi
-  log "deploy: $(jq -c '{changed, changes, pull: (.pull // {} | {new, updated, unchanged, revoked}), posts: .export.posts, generations: .export.generations}' "$out")"
+  log "deploy: $(jq -c '{changed, changes, pull: (.pull // {} | {full, new, updated, unchanged, revoked}), posts: .export.posts, generations: .export.generations}' "$out")"
   rm -f "$out"
   if [ -n "$(git status --porcelain -- site)" ]; then SITE_CHANGED=1; fi
 }
