@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import bump_bucket, comment_counts, connect, connect_readonly, jload, reaction_totals, resolve_post
-from .generation import PUBLIC_ID, public_summary
+from .generation import PUBLIC_ID, model_short_label, public_summary
 from .media import MediaError, avatar_file, media_exists, media_file, media_kind, thumb_file
 from .ranking import combine, engagement, engagement_score, iso_week, today, top, window
 
@@ -46,7 +46,13 @@ def public_generation(r: sqlite3.Row) -> dict | None:
     gen = jload(r["generation_json"], None)
     if not r["public_id"] or not isinstance(gen, dict):
         return None
-    return {"public_id": r["public_id"], **{k: gen[k] for k in config.PUBLIC_GENERATION_KEYS if k in gen}}
+    out = {"public_id": r["public_id"], **{k: gen[k] for k in config.PUBLIC_GENERATION_KEYS if k in gen}}
+    label = model_short_label(gen.get("model_label")) or model_short_label(gen.get("model"))
+    if label:
+        out["model_label"] = label        # always the short string, never a dict or its repr
+    else:
+        out.pop("model_label", None)
+    return out
 
 
 def public_source(src: str | None) -> str | None:

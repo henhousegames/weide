@@ -58,7 +58,7 @@ import httpx
 
 from . import config
 from .db import get_meta, jdump, jload, now_iso, parse_time, set_meta, upsert_post
-from .generation import PRIVATE_INPUT, PUBLIC_ID, REDACTED, sanitize
+from .generation import PRIVATE_INPUT, PUBLIC_ID, REDACTED, model_short_label, sanitize
 
 PUBLICATIONS_PATH = "/api/v1/publications"
 CURSOR_KEY = "publications_since"  # meta key: next_since of the last fully successful pull
@@ -311,15 +311,11 @@ def public_record(summary: dict, pub: Publication) -> dict:
     s = sanitize({k: v for k, v in summary.items() if k not in SUMMARY_DROP and k != "inputs"}) or {}
     if inputs is not None:
         s["inputs"] = [_input(x) for x in (inputs if isinstance(inputs, list) else [inputs])]
-    if not s.get("model_label"):
-        m = s.get("model")
-        if isinstance(m, dict):
-            name = m.get("display_name") or m.get("name") or m.get("id")
-            ver = None if m.get("display_name") else m.get("version")
-        else:
-            name, ver = (m if isinstance(m, str) else None), None
-        if name:
-            s["model_label"] = f"{name} {ver}".strip() if ver else str(name)
+    label = model_short_label(s.get("model_label")) or model_short_label(s.get("model"))
+    if label:
+        s["model_label"] = label
+    else:
+        s.pop("model_label", None)
     return s
 
 

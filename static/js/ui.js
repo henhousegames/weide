@@ -121,7 +121,7 @@ export function genBadge(post, { withMissing = false } = {}) {
   const g = post.generation;
   if (g?.public_id) {
     return h("a", { class: "gen-badge", href: `#/g/${encodeURIComponent(g.public_id)}` },
-      `Erstellt mit ${g.model_label || "einem unbenannten Modell"}`);
+      `Erstellt mit ${typeof g.model_label === "string" && g.model_label ? g.model_label : "einem unbenannten Modell"}`);
   }
   return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Keine Generierungsdetails verfügbar") : null;
 }

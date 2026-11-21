@@ -47,6 +47,7 @@ from starlette.background import BackgroundTask
 
 from . import config
 from .db import parse_time
+from .generation import model_short_label
 from .preview_auth import install_auth, load_key
 from .preview_login import LinkStore, OwnerAutoLogin, owner_logins
 from .review import DRAFT_STATUS, GEN_ID, LAB_PATH, SLUG, ReviewClient, ReviewError, ReviewItem, ReviewSettings
@@ -303,7 +304,7 @@ def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request:
     slugs = [s for s in ((pub.character if pub else None), it.labels.get("character")) if isinstance(s, str)]
     account = next((accounts[s] for s in slugs if s in accounts), STUDIO)
     posted_at = _when(it, state == "approved")
-    model = it.model_label or it.model or "unbekanntes Modell"
+    model = model_short_label({"id": it.model, "display_name": it.model_label}) or "unbekanntes Modell"
     label_caption = it.labels.get("caption") if isinstance(it.labels.get("caption"), str) else None
     caption = (pub.caption if pub else None) or label_caption or f"{model} · {parse_time(posted_at):%d.%m.%Y}"
     base = f"/preview/media/{quote(it.id, safe='')}"
