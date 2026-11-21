@@ -134,7 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("export-static", help="write a static snapshot (published posts only) for a plain file host")
     s.add_argument("outdir")
-    s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages (default: $HENHOUSE_TODAY / $WEIDE_TODAY or local date)")
+    s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages (default: $HENHOUSE_TODAY / $WEIDE_TODAY, else the date of the newest published post)")
     s.add_argument("--link", action="store_true", help="hard-link media files instead of copying (same filesystem)")
     _db_arg(s)
     s.set_defaults(fn=cmd_export_static)
@@ -147,7 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("deploy", help="pull-approved, export-static into a site dir, leak check, report changes (no git)")
     s.add_argument("site", nargs="?", default="site", help="site directory (default: site)")
     s.add_argument("--skip-pull", action="store_true", help="only re-export the current database")
-    s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages")
+    s.add_argument("--today", default=None, help="world date YYYY-MM-DD for the ranking pages (default: date of the newest published post)")
     _db_arg(s)
     s.set_defaults(fn=cmd_deploy)
     return ap

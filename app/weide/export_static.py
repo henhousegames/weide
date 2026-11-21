@@ -10,7 +10,9 @@ Only published posts are exported (the server hides everything else). Writer-fac
 file paths (media_path, raw moment video/poster), dev CLI hints (top `commands`, meta `cli`), moment
 `why` strings that are pipeline ids. Generation posts additionally get data/gen/<public_id>.json, the
 sanitized public summary from generation.py (all settings and the prompt; no paths, keys, hosts or run
-ids). `leak_check()` scans the result for paths, secrets and run ids (summaries with their own rules).
+ids). Files of an earlier export that are no longer referenced (revoked
+posts) are removed. The world's "today" defaults to the date of the newest published post, so the same
+data exports to the same files on any day. `leak_check()` scans the result for paths, secrets and run ids (summaries with their own rules).
 """
 from __future__ import annotations
 
@@ -173,6 +175,38 @@ def leak_check(out: Path) -> list[str]:
 
 # --- export ----------------------------------------------------------------------------------------
 
+def newest_post_day(db_file: Path) -> str | None:
+    """World date of the newest published post: the default "today" of an export, so re-exporting the
+    same data on another day gives the same files (no daily churn). None for an empty database."""
+    if not Path(db_file).is_file():
+        return None
+    con = sqlite3.connect(str(db_file))
+    try:
+        row = con.execute("SELECT substr(posted_at, 1, 10) FROM posts WHERE status='published' "
+                          "ORDER BY ts DESC LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        con.close()
+    return row[0] if row else None
+
+
+def _prune(out: Path, keep: set[str]) -> list[str]:
+    """Remove media/thumb/avatar files of an earlier export that are no longer referenced (e.g. a
+    revoked post). Skipped where the export dir *is* the source root (exporting into the repo root)."""
+    removed = []
+    for sub, root in (("media", config.MEDIA_ROOT), ("thumb", config.THUMB_ROOT), ("avatar", config.AVATAR_ROOT)):
+        d = out / sub
+        if not d.is_dir() or d.resolve() == Path(root).resolve():
+            continue
+        for f in sorted(d.rglob("*")):
+            rel = f.relative_to(out).as_posix()
+            if f.is_file() and rel not in keep:
+                f.unlink()
+                removed.append(rel)
+    return removed
+
+
 def export_static(out: Path, db_path: str | Path | None = None, *, today: str | None = None,
                   link: bool = False) -> dict:
     from fastapi.testclient import TestClient
@@ -180,12 +214,13 @@ def export_static(out: Path, db_path: str | Path | None = None, *, today: str | 
     from .server import create_app
 
     saved_today = config.TODAY_OVERRIDE
+    db_file = Path(db_path or config.DEFAULT_DB)
+    today = today or config.TODAY_OVERRIDE or newest_post_day(db_file)
     if today:
         date.fromisoformat(today)
         config.TODAY_OVERRIDE = today
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    db_file = Path(db_path or config.DEFAULT_DB)
     try:
         client = TestClient(create_app(db_file))
         con = sqlite3.connect(str(db_file))
@@ -258,6 +293,7 @@ def _export(out: Path, client: Any, con: sqlite3.Connection, link: bool) -> dict
                         ignore=shutil.ignore_patterns("index.html"))
     (out / "index.html").write_text(render_index(static=True), encoding="utf-8")
     (out / ".nojekyll").write_text("", encoding="utf-8")
+    pruned = _prune(out, {v for v in files.done.values() if v})
     size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file() and ".git" not in p.parts)
-    return {**stats, "files": len([v for v in files.done.values() if v]), "missing": files.missing,
+    return {**stats, "files": len([v for v in files.done.values() if v]), "missing": files.missing, "pruned": len(pruned),
             "bytes": size, "today": meta["today"], "week": meta["week"]}
