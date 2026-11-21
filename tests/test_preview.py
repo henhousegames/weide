@@ -395,6 +395,98 @@ def test_without_service_settings_shows_published_only(henhouse_db, monkeypatch)
     assert c.get("/api/preview/status").json()["connected"] is False
 
 
+def _no_service_env(monkeypatch):
+    for prefix in ("HENHOUSE_", "WEIDE_"):
+        for name in ("REVIEW_KEY", "SERVICE_URL"):
+            monkeypatch.delenv(prefix + name, raising=False)
+
+
+def test_no_review_key_starts_cleanly_without_poller(henhouse_db, monkeypatch, caplog):
+    _no_service_env(monkeypatch)
+    monkeypatch.setenv("HENHOUSE_SERVICE_URL", BASE)
+    monkeypatch.setenv("HENHOUSE_SERVICE_KEY", "EXAMPLE-publish-key-" + "p" * 20)
+    started = []
+    real_task = asyncio.create_task
+    monkeypatch.setattr(preview.asyncio, "create_task", lambda *a, **k: started.append(a) or real_task(*a, **k))
+    caplog.set_level(logging.DEBUG, logger="weide.preview")
+    a = preview.create_preview_app(henhouse_db, token=TOKEN)            # default poll interval
+    assert a.state.store.client is None
+    warnings = [r.getMessage() for r in caplog.records if "studio connection" in r.getMessage()]
+    assert len(warnings) == 1 and "HENHOUSE_REVIEW_KEY missing" in warnings[0]
+    assert "p" * 20 not in caplog.text and BASE not in caplog.text    # no key, no URL
+    with TestClient(a) as c:                                            # runs the lifespan
+        login(c)
+        s = c.get("/api/preview/status").json()
+        assert s["connected"] is False and s["studio"] == "off"
+        assert s["notice"] == "Studio-Verbindung fehlt – Entwürfe und Freigaben nicht sichtbar"
+        items = c.get("/api/feed?limit=100").json()["items"]
+        assert len(items) == 41 and not any("preview" in i for i in items)
+        assert c.get("/preview/media/g_draft1/output").status_code == 404
+    assert started == []                                                # no polling task
+    assert asyncio.run(asyncio.wait_for(a.state.store.run(0.01), 1)) is None   # an idle poller returns
+
+
+def test_invalid_service_url_does_not_crash(henhouse_db, monkeypatch, caplog):
+    _no_service_env(monkeypatch)
+    monkeypatch.setenv("HENHOUSE_SERVICE_URL", "ftp://somewhere")
+    monkeypatch.setenv("HENHOUSE_REVIEW_KEY", REVIEW_KEY)
+    a = preview.create_preview_app(henhouse_db, token=TOKEN, poll_interval=None)
+    assert a.state.store.state == "off" and REVIEW_KEY not in caplog.text
+
+
+def _failing_app(henhouse_db, handler):
+    return preview.create_preview_app(henhouse_db, token=TOKEN, settings=ReviewSettings(BASE, REVIEW_KEY),
+                                      transport=httpx.MockTransport(handler), poll_interval=None)
+
+
+def test_service_down_shows_notice_and_retries_with_backoff(henhouse_db, caplog):
+    caplog.set_level(logging.DEBUG)
+    calls = []
+
+    def down(request):
+        calls.append(request)
+        raise httpx.ConnectError("connection refused")
+    a = _failing_app(henhouse_db, down)
+    store, delays = a.state.store, []
+
+    async def sleep(d):
+        delays.append(d)
+        if len(delays) == 5:
+            raise asyncio.CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(store.run(60, sleep=sleep))
+    assert len(calls) == 5 and delays == [5, 10, 20, 40, 80]
+    c = TestClient(a)
+    login(c)
+    s = c.get("/api/preview/status").json()
+    assert s["studio"] == "down" and s["notice"].startswith("Studio nicht erreichbar")
+    assert len(c.get("/api/feed?limit=100").json()["items"]) == 41      # still serving published posts
+    assert REVIEW_KEY not in caplog.text and "service.test" not in caplog.text
+    assert store.retry_delay(60) == 80 and (setattr(store, "failures", 99) or store.retry_delay(60)) == preview.BACKOFF_MAX
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_auth_failure_shows_notice_and_logs_status_only(henhouse_db, caplog, code):
+    caplog.set_level(logging.DEBUG)
+    a = _failing_app(henhouse_db, lambda r: httpx.Response(code, json={"detail": "bad key " + REVIEW_KEY}))
+    asyncio.run(a.state.store.poll_once())
+    c = TestClient(a)
+    login(c)
+    s = c.get("/api/preview/status").json()
+    assert s["studio"] == "auth" and s["notice"] and "Studio" in s["notice"]
+    assert f"HTTP {code}" in caplog.text and REVIEW_KEY not in caplog.text and REVIEW_KEY not in json.dumps(s)
+
+
+def test_recovery_clears_notice(client, service):
+    service.fail = True
+    asyncio.run(client.app.state.store.poll_once())
+    assert client.get("/api/preview/status").json()["studio"] == "down"
+    service.fail = False
+    asyncio.run(client.app.state.store.poll_once())
+    s = client.get("/api/preview/status").json()
+    assert s["studio"] == "ok" and s["notice"] is None and client.app.state.store.retry_delay(60) == 60
+
+
 def test_index_injects_preview_assets_but_public_export_does_not(client):
     html = client.get("/").text
     assert "/preview/static/preview.js" in html and "/preview/static/preview.css" in html and "noindex" in html

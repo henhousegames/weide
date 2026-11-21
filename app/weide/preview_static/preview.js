@@ -84,9 +84,10 @@
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => {
         if (!s) return;
-        st.textContent = !s.connected ? "Studio nicht verbunden"
-          : s.error && !s.last_poll ? "Studio nicht erreichbar"
-          : `${s.generations} aus dem Studio`;
+        // notice: one line from the server when drafts/approvals are unavailable or stale
+        st.textContent = s.notice || (!s.connected ? "Studio-Verbindung fehlt – Entwürfe und Freigaben nicht sichtbar"
+          : `${s.generations} aus dem Studio`);
+        if (s.notice) b.classList.add("pv-banner--notice");
       }).catch(() => {});
   }
 

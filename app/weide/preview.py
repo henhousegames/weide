@@ -60,6 +60,11 @@ MARK_APPROVED = "FREIGEGEBEN – noch nicht live"
 MARK_DRAFT = "ENTWURF"
 PROXY_HEADERS = ("content-type", "content-encoding", "content-length", "content-range", "accept-ranges", "last-modified", "etag")
 FORBIDDEN_ENV = "SERVICE_KEY"     # the publish key: never in the preview process
+BACKOFF_START = 5                 # seconds before the first retry after a failed poll, doubled per failure
+BACKOFF_MAX = 600
+NOTICE_OFF = "Studio-Verbindung fehlt – Entwürfe und Freigaben nicht sichtbar"
+NOTICE_DOWN = "Studio nicht erreichbar – Entwürfe und Freigaben nicht aktuell"
+NOTICE_AUTH = "Studio verweigert den Zugriff – Entwürfe und Freigaben nicht aktuell"
 
 
 class PreviewConfigError(Exception):
@@ -146,6 +151,21 @@ def drop_publish_key() -> bool:
     return dropped
 
 
+def load_review_settings() -> ReviewSettings | None:
+    """The review API settings, or None (with one warning, no values logged) when they are missing or
+    invalid: the preview then serves published posts only. Never falls back to the publish key."""
+    try:
+        settings = ReviewSettings.load()
+    except ReviewError as e:
+        log.warning("studio connection disabled: %s; showing published posts only", e)
+        return None
+    if settings is None:
+        missing = [config.ENV_PREFIX + n for n in ("SERVICE_URL", "REVIEW_KEY") if not config.env(n)]
+        log.warning("studio connection not configured (%s missing); showing published posts only",
+                    " and ".join(missing))
+    return settings
+
+
 # --- review store ------------------------------------------------------------------------------------
 
 class ReviewStore:
@@ -158,10 +178,30 @@ class ReviewStore:
         self.polls = 0
         self.last_ok: str | None = None
         self.error: str | None = None
+        self.failures = 0                    # consecutive failed polls
+        self.auth_failed = False
 
     @property
     def connected(self) -> bool:
         return self.client is not None
+
+    @property
+    def state(self) -> str:
+        """off: not configured; auth: key refused (401/403); down: unreachable/failing; ok."""
+        if self.client is None:
+            return "off"
+        if self.failures:
+            return "auth" if self.auth_failed else "down"
+        return "ok"
+
+    @property
+    def notice(self) -> str | None:
+        return {"off": NOTICE_OFF, "down": NOTICE_DOWN, "auth": NOTICE_AUTH}.get(self.state)
+
+    def retry_delay(self, interval: float) -> float:
+        if not self.failures:
+            return interval
+        return min(BACKOFF_START * 2 ** (self.failures - 1), BACKOFF_MAX)
 
     async def poll_once(self) -> None:
         if self.client is None:
@@ -170,8 +210,11 @@ class ReviewStore:
         try:
             raw, cursor = await self.client.generations(None if full else self.cursor)
         except ReviewError as e:
+            # messages carry status codes / exception class names only, never the key or the URL
             self.error = str(e)
-            log.warning("review poll failed: %s", self.error)
+            self.failures += 1
+            self.auth_failed = e.status in (401, 403)
+            log.warning("review poll failed (%d in a row): %s", self.failures, self.error)
             return
         fresh: dict[str, ReviewItem] = {} if full else dict(self.items)
         bad = 0
@@ -185,13 +228,26 @@ class ReviewStore:
         self.items = fresh
         self.cursor = cursor
         self.polls += 1
+        if self.failures:
+            log.warning("review API reachable again")
+        self.failures, self.auth_failed = 0, False
         self.last_ok = datetime.now(config.TZ).isoformat(timespec="seconds")
         self.error = f"{bad} malformed item(s) skipped" if bad else None
 
-    async def run(self, interval: float) -> None:
+    async def run(self, interval: float, sleep: Callable[[float], Any] = asyncio.sleep) -> None:
+        """Poll forever; after failures retry with exponential backoff instead of the normal interval.
+        Never raises (an unexpected error is counted as a failed poll) so serving goes on."""
+        if self.client is None:
+            return
         while True:
-            await self.poll_once()
-            await asyncio.sleep(interval)
+            try:
+                await self.poll_once()
+            except Exception as e:  # noqa: BLE001 - the poller must never take the server down
+                self.error = f"review poll crashed: {type(e).__name__}"
+                self.failures += 1
+                self.auth_failed = False
+                log.warning("%s", self.error)
+            await sleep(self.retry_delay(interval))
 
     def get(self, gid: str) -> ReviewItem | None:
         it = self.items.get(gid)
@@ -315,7 +371,7 @@ def create_preview_app(db_path: str | Path | None = None, *, token: str | None =
     drop_publish_key()
     token = token or load_key()
     if settings is None:
-        settings = ReviewSettings.load()
+        settings = load_review_settings()
     client = ReviewClient(settings, transport=transport) if settings else None
     store = ReviewStore(client)
     auto = auto if auto is not None else OwnerAutoLogin(owner_logins())
@@ -350,8 +406,8 @@ def create_preview_app(db_path: str | Path | None = None, *, token: str | None =
         @app.get("/api/preview/status")
         def status() -> dict:
             items = [it for it in store.items.values() if it.visible]
-            return {"preview": True, "connected": store.connected, "last_poll": store.last_ok,
-                    "error": store.error, "generations": len(items)}
+            return {"preview": True, "connected": store.connected, "studio": store.state, "notice": store.notice,
+                    "last_poll": store.last_ok, "error": store.error, "generations": len(items)}
 
         @app.get("/api/feed")
         def feed(request: Request, limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0),

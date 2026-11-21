@@ -42,7 +42,9 @@ SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 class ReviewError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status        # HTTP status of the service, None when it was not reached
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:
@@ -169,7 +171,7 @@ class ReviewClient:
         except httpx.HTTPError as e:
             raise ReviewError(self.redact(f"review API unreachable: {type(e).__name__}")) from None
         if r.status_code != 200:
-            raise ReviewError(f"review API answered HTTP {r.status_code}")
+            raise ReviewError(f"review API answered HTTP {r.status_code}", r.status_code)
         try:
             data = r.json()
         except ValueError:
