@@ -1,0 +1,17 @@
+# User unit: one auto-deploy run (pull approved generations, rebuild site/, commit + push).
+# Install (not done automatically):
+#   cp scripts/systemd/henhouse-deploy.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now henhouse-deploy.timer
+[Unit]
+Description=henhouse: publish approved generations and push the static site
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/develop/weide
+EnvironmentFile=-%h/develop/weide/private/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/develop/weide/scripts/auto-deploy.sh
+TimeoutStartSec=45min
+Nice=10
