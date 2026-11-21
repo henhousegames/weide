@@ -1,7 +1,7 @@
 // Views: feed, post detail, profile, leaderboards, people, the desktop rail.
 // Copy is in-world German; CLI hints live in the README (and the collapsed "Quelle und Ranking").
 import { api } from "./api.js";
-import { avatar, earTag, genBadge, media, postCard, postHead, reactionBar, robotNote, state } from "./ui.js";
+import { avatar, earTag, genBadge, media, postCard, postHead, reactionBar, robotNote, simNote, state } from "./ui.js";
 import { compact, copy, dayLabel, dec, h, icons, longDay, mount, num, plural, score, when } from "./util.js";
 
 const PAGE = 8;
@@ -182,7 +182,7 @@ function inputItem(i) {
 export async function generationView(root, publicId) {
   const g = await api.genSummary(publicId);
   const { public_id: pid, post_id: postId, model_label: label, model, version, license, task, preset,
-    parameters, prompt, negative_prompt: negative, workflow, inputs, ...other } = g;
+    parameters, prompt, negative_prompt: negative, workflow, inputs, start_source_sim: sim, ...other } = g;
   const modelInfo = model && typeof model === "object" ? { ...model } : { ...(model != null ? { name: model } : {}) };
   if (version != null) modelInfo.version = version;
   if (license != null) modelInfo.license = license;
@@ -210,6 +210,7 @@ export async function generationView(root, publicId) {
     h("article", { class: "genpage" },
       h("h1", { class: "view-title" }, "Generierung"),
       h("p", { class: "view-sub" }, label ? `Erstellt mit ${label}` : "Generierungsdetails",
+        sim === true ? [" · ", simNote(true)] : null,
         postId != null ? [" · ", h("a", { href: `#/p/${postId}` }, "Zum Post")] : null),
       h("p", { class: "gen__id" }, h("span", { class: "tag" }, pid)),
       ...sections));

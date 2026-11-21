@@ -120,13 +120,18 @@ export function reactionBar(post, { showComments = true, rail = false } = {}) {
   return bar;
 }
 
+export const SIM_NOTE = "Startbild aus eigener Simulation";
+// small note next to the model label when the start frame came from our own simulation
+export const simNote = (on) => (on === true ? h("span", { class: "gen-note" }, SIM_NOTE) : null);
+
 // "Erstellt mit <model>" links to the public generation summary (#/g/<public_id>). Legacy posts have
 // no generation data; only the post page says so (withMissing), feed cards stay quiet.
 export function genBadge(post, { withMissing = false } = {}) {
   const g = post.generation;
   if (g?.public_id) {
-    return h("a", { class: "gen-badge", href: `#/g/${encodeURIComponent(g.public_id)}` },
+    const badge = h("a", { class: "gen-badge", href: `#/g/${encodeURIComponent(g.public_id)}` },
       `Erstellt mit ${typeof g.model_label === "string" && g.model_label ? g.model_label : "einem unbenannten Modell"}`);
+    return g.start_source_sim === true ? h("span", { class: "gen-line" }, badge, simNote(true)) : badge;
   }
   return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Keine Generierungsdetails verfügbar") : null;
 }

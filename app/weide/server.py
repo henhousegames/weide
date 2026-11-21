@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import bump_bucket, comment_counts, connect, connect_readonly, jload, reaction_totals, resolve_post
-from .generation import PUBLIC_ID, model_short_label, public_summary
+from .generation import PUBLIC_ID, START_SOURCE_KEY, model_short_label, public_summary, start_source_sim
 from .media import MediaError, avatar_file, media_exists, media_file, media_kind, thumb_file
 from .ranking import combine, engagement, engagement_score, iso_week, today, top, window
 
@@ -62,6 +62,10 @@ def public_generation(r: sqlite3.Row) -> dict | None:
         out["model_label"] = label        # always the short string, never a dict or its repr
     else:
         out.pop("model_label", None)
+    if gen.get(START_SOURCE_KEY) is True or start_source_sim(gen):
+        out[START_SOURCE_KEY] = True      # only ever true; absent otherwise
+    else:
+        out.pop(START_SOURCE_KEY, None)
     return out
 
 
