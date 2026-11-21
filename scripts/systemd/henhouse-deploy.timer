@@ -1,0 +1,10 @@
+[Unit]
+Description=henhouse: run henhouse-deploy.service periodically
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=12min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

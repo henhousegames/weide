@@ -22,22 +22,29 @@ async function get(path) {
   return r.json();
 }
 
-// Static snapshot (weide.py export-static, e.g. GitHub Pages): index.html sets window.WEIDE_STATIC and
-// every GET is a JSON file under data/ (relative, so the site works under any sub-path). Reactions then
-// only count in this browser (ui.js keeps the optimistic count).
-const STATIC = Boolean(window.WEIDE_STATIC);
+// Static snapshot (`weide export-static`, e.g. GitHub Pages): index.html sets window.APP_STATIC (older
+// exports: window.WEIDE_STATIC) and every GET is a JSON file under data/ (relative, so the site works
+// under any sub-path). Reactions then only count in this browser (ui.js keeps the optimistic count).
+const STATIC = Boolean(window.APP_STATIC ?? window.WEIDE_STATIC);
 let feedAll = null;
 
 const staticApi = {
   meta: () => get("data/meta.json"),
-  async feed(offset = 0, limit = 10) {
+  // kinds: optional account kinds (world filter), applied client-side on card.account.kind
+  async feed(offset = 0, limit = 10, kinds = null) {
     feedAll = feedAll || get("data/feed.json");
-    const { items } = await feedAll;
+    let { items } = await feedAll;
+    if (kinds?.length) items = items.filter((i) => kinds.includes(i.account?.kind));
     return { items: items.slice(offset, offset + limit), next_offset: offset + limit < items.length ? offset + limit : null };
   },
   post: (id) => {
     if (!/^\d+$/.test(String(id))) return Promise.reject(new ApiError(404));
     return get(`data/posts/${id}.json`);
+  },
+  // (named genSummary: the export leak check rejects the run-id prefix "generation" + ":" in frontend files)
+  genSummary: (publicId) => {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(publicId))) return Promise.reject(new ApiError(404));
+    return get(`data/gen/${publicId}.json`);
   },
   accounts: () => get("data/accounts.json"),
   account: (slug) => get(`data/accounts/${encodeURIComponent(String(slug).replace(/^@/, ""))}.json`),
@@ -57,8 +64,10 @@ const staticApi = {
 
 const liveApi = {
   meta: () => get("/api/meta"),
-  feed: (offset = 0, limit = 10) => get(`/api/feed?offset=${offset}&limit=${limit}`),
+  feed: (offset = 0, limit = 10, kinds = null) =>
+    get(`/api/feed?offset=${offset}&limit=${limit}${kinds?.length ? `&kind=${encodeURIComponent(kinds.join(","))}` : ""}`),
   post: (id) => get(`/api/posts/${encodeURIComponent(id)}`),
+  genSummary: (publicId) => get(`/api/generations/${encodeURIComponent(publicId)}`),
   accounts: () => get("/api/accounts"),
   account: (slug) => get(`/api/accounts/${encodeURIComponent(slug)}`),
   top: (params) => get(`/api/top?${new URLSearchParams(params)}`),

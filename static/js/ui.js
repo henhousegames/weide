@@ -6,7 +6,8 @@ import { compact, h, icons, num, plural, store, when } from "./util.js";
 export const state = { meta: null };
 
 export function earTag(account, { link = true } = {}) {
-  const cls = `tag${account.kind === "human" ? " tag--human" : account.kind === "follower" ? " tag--follower" : account.kind === "house" ? " tag--house" : ""}`;
+  const mod = { human: "human", robot: "robot", follower: "follower", house: "house" }[account.kind];
+  const cls = `tag${mod ? ` tag--${mod}` : ""}`;
   return link
     ? h("a", { class: cls, href: `#/u/${encodeURIComponent(account.slug)}` }, account.handle)
     : h("span", { class: cls }, account.handle);
@@ -67,10 +68,23 @@ function captionNode(post, clamp) {
     post.hashtags ? [post.kind === "text" ? "" : " ", h("span", { class: "caption__tags" }, post.hashtags)] : null);
 }
 
-const pressedKey = (id) => `weide:r:${id}`;
+// Pressed reactions per post live in localStorage under "<app slug>:r:<id>" (slug derived from the app
+// name like config.APP_SLUG). Keys written under the previous name ("weide:r:<id>") are still read and
+// merged in, so returning visitors keep their reactions after the rename.
+const LEGACY_SLUG = "weide";
+const appSlug = () => String(state.meta?.app_name || "").toLowerCase().replace(/[^a-z0-9]+/g, "") || "app";
+const pressedKey = (id) => `${appSlug()}:r:${id}`;
+
+function loadPressed(id) {
+  const now = store(pressedKey(id)) || [];
+  const old = appSlug() === LEGACY_SLUG ? [] : store(`${LEGACY_SLUG}:r:${id}`) || [];
+  const all = [...new Set([...now, ...old])];
+  if (all.length > now.length) store(pressedKey(id), all);     // migrate once to the new key
+  return new Set(all);
+}
 
 export function reactionBar(post, { showComments = true } = {}) {
-  const pressed = new Set(store(pressedKey(post.id)) || []);
+  const pressed = loadPressed(post.id);
   const bar = h("div", { class: "reacts" });
   for (const r of state.meta?.reactions || []) {
     const count = h("span", {}, compact(post.reactions?.[r.key] || 0));
@@ -101,6 +115,17 @@ export function reactionBar(post, { showComments = true } = {}) {
   return bar;
 }
 
+// "Erstellt mit <model>" links to the public generation summary (#/g/<public_id>). Legacy posts have
+// no generation data; only the post page says so (withMissing), feed cards stay quiet.
+export function genBadge(post, { withMissing = false } = {}) {
+  const g = post.generation;
+  if (g?.public_id) {
+    return h("a", { class: "gen-badge", href: `#/g/${encodeURIComponent(g.public_id)}` },
+      `Erstellt mit ${g.model_label || "einem unbenannten Modell"}`);
+  }
+  return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Keine Generierungsdetails verfügbar") : null;
+}
+
 export function postHead(post) {
   return h("div", { class: "post__head" },
     avatar(post.account, 40),
@@ -117,6 +142,7 @@ export function postCard(post) {
     media(post),
     reactionBar(post, { showComments: false }),
     post.kind === "text" ? (post.hashtags ? captionNode(post, false) : null) : captionNode(post, long),
+    genBadge(post),
     h("a", { class: "post__more", href: `#/p/${post.id}` },
       n ? [icons.comment(), plural(n, "Kommentar", "Kommentare")] : "Zum Post"));
 }
