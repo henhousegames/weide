@@ -44,6 +44,7 @@ PAGE_LIMIT = 500                  # the API's maximum page size
 MAX_PAGES = 1000                  # guard against a cursor that never ends
 LAB_PATH = re.compile(r"^/#/g/[A-Za-z0-9_-]{1,80}$")
 GEN_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+START_SOURCE = "start_source"
 PROVENANCE_KEYS = ("compose", "parents", "effective")   # where a compose names its parents (kept for the note)
 SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -120,7 +121,7 @@ class ReviewItem:
     duration_s: float | None = None
     has_audio: bool | None = None
     fps: float | None = None
-    provenance: dict = field(default_factory=dict)   # labels + parent references, for start_source_sim()
+    provenance: dict = field(default_factory=dict)   # start_source, labels + parent refs (review_start_source_sim)
 
     @property
     def visible(self) -> bool:
@@ -145,6 +146,8 @@ class ReviewItem:
         labels = d.get("labels") if isinstance(d.get("labels"), dict) else {}
         lab_path = _str(d.get("lab_path"))
         provenance = {"labels": labels, **{k: d[k] for k in PROVENANCE_KEYS if d.get(k) is not None}}
+        if START_SOURCE in d:              # the service's field (also null): decides over labels/parents
+            provenance[START_SOURCE] = d[START_SOURCE]
         return cls(id=gid, status=str(d.get("status") or ""), task=_str(d.get("task")), model=model_id,
                    model_label=model_label, labels=labels, prompt=_str(d.get("prompt_original")),
                    created_at=_str(d.get("created_at")), finished_at=_str(d.get("finished_at")),

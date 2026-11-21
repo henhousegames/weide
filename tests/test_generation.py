@@ -1,6 +1,7 @@
 """Public generation summaries: sanitizer, live endpoint, static export and leak check."""
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -157,32 +158,65 @@ def test_leak_check_on_planted_summary(tmp_path):
 
 # --- start source ("Startbild aus eigener Simulation") -------------------------------------------------
 
-from weide.generation import start_source_sim  # noqa: E402
+from weide.generation import review_start_source_sim, start_source_sim  # noqa: E402
+
+SIM_SUMMARY = json.loads((Path(__file__).parent / "fixtures/publication_summary.json").read_text(encoding="utf-8"))
 
 
-def test_start_source_direct_label_only_exact_value():
-    assert start_source_sim({"labels": {"start_source": "isaac-sim"}})
-    for other in ({"labels": {}}, {}, {"labels": {"start_source": "Isaac-Sim"}}, {"labels": {"start_source": "blender"}},
-                  {"labels": {"start_source": ["isaac-sim"]}}, {"labels": {"spec": "isaac-sim"}}, {"labels": None}):
+def test_start_source_summary_top_level_only_exact_value():
+    assert start_source_sim(SIM_SUMMARY)                                       # API.md-shaped compose summary
+    assert start_source_sim({"start_source": "isaac-sim"})
+    for other in ({"start_source": None}, {}, {"start_source": "Isaac-Sim"}, {"start_source": "blender"},
+                  {"start_source": ["isaac-sim"]}, {"start_source": True}, None, "isaac-sim"):
         assert not start_source_sim(other), other
 
 
-def test_start_source_from_nested_compose_parents():
-    # summary shape: composition.segments[], a segment that is itself a compose names its own parents
-    summary = {"labels": {"story": "h001"}, "composition": {"segments": [
+def test_start_source_summary_segment_only():
+    summary = {**SIM_SUMMARY, "start_source": None}
+    assert start_source_sim(summary)                                          # segment 1 says isaac-sim
+    summary["composition"] = {"segments": [{**s, "start_source": None} for s in SIM_SUMMARY["composition"]["segments"]]}
+    assert not start_source_sim(summary)
+    assert not start_source_sim({"composition": {"segments": [{"start_source": "other"}, "isaac-sim", None]}})
+
+
+def test_start_source_summary_ignores_labels_and_parents():
+    for leaky in ({"labels": {"start_source": "isaac-sim"}},
+                  {"start_source": None, "labels": {"start_source": "isaac-sim"}},
+                  {"parents": [{"start_source": "isaac-sim"}], "compose": {"parents": [{"labels": {"start_source": "isaac-sim"}}]}},
+                  {"composition": {"segments": [{"labels": {"start_source": "isaac-sim"}},
+                                                {"parents": [{"start_source": "isaac-sim"}]}]}}):
+        assert not start_source_sim(leaky), leaky
+
+
+def test_review_start_source_top_level_field_decides():
+    assert review_start_source_sim({"start_source": "isaac-sim", "labels": {}})
+    # the service's field wins over labels and parents (it already inherits through compose parents)
+    assert not review_start_source_sim({"start_source": None, "labels": {"start_source": "isaac-sim"}})
+    assert not review_start_source_sim({"start_source": "Isaac Sim"})
+    feed = {"g_new": {"start_source": "isaac-sim"}, "g_newnull": {"start_source": None, "labels": {"start_source": "isaac-sim"}}}
+    assert review_start_source_sim({"labels": {}, "compose": {"parents": ["g_new"]}}, feed.get)
+    assert not review_start_source_sim({"labels": {}, "compose": {"parents": ["g_newnull"]}}, feed.get)
+
+
+def test_review_start_source_fallback_labels_for_older_items():
+    assert review_start_source_sim({"labels": {"start_source": "isaac-sim"}})
+    for other in ({"labels": {}}, {}, {"labels": {"start_source": "Isaac-Sim"}}, {"labels": {"start_source": "blender"}},
+                  {"labels": {"start_source": ["isaac-sim"]}}, {"labels": {"spec": "isaac-sim"}}, {"labels": None}):
+        assert not review_start_source_sim(other), other
+    nested = {"labels": {"story": "h001"}, "compose": {"parents": [
         {"segment": 1, "model": "LTX-2.5"},
         {"segment": 2, "models": ["Wan"], "parents": [{"labels": {"start_source": "isaac-sim"}}]}]}}
-    assert start_source_sim(summary)
-    summary["composition"]["segments"][1]["parents"][0]["labels"]["start_source"] = "other"
-    assert not start_source_sim(summary)
+    assert review_start_source_sim(nested)
+    nested["compose"]["parents"][1]["parents"][0]["labels"]["start_source"] = "other"
+    assert not review_start_source_sim(nested)
 
 
-def test_start_source_parent_ids_resolved_recursively():
+def test_review_start_source_parent_ids_resolved_recursively():
     feed = {"g_a": {"labels": {}, "compose": {"parents": ["g_b"]}},
             "g_b": {"labels": {}, "compose": {"parents": [{"generation_id": "g_c"}]}},
             "g_c": {"labels": {"start_source": "isaac-sim"}},
             "g_loop": {"labels": {}, "compose": {"parents": ["g_loop", "g_missing"]}}}
     look = feed.get
-    assert start_source_sim(feed["g_a"], look) and start_source_sim(feed["g_b"], look)
-    assert not start_source_sim(feed["g_a"])                # ids alone say nothing without the feed
-    assert not start_source_sim(feed["g_loop"], look)       # cycles and unknown ids end quietly
+    assert review_start_source_sim(feed["g_a"], look) and review_start_source_sim(feed["g_b"], look)
+    assert not review_start_source_sim(feed["g_a"])                # ids alone say nothing without the feed
+    assert not review_start_source_sim(feed["g_loop"], look)       # cycles and unknown ids end quietly

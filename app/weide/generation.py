@@ -62,26 +62,38 @@ START_SOURCE_LABEL = "start_source"
 START_SOURCE_SIM = "isaac-sim"           # the only value that counts (exact match)
 START_SOURCE_NOTE = "Startbild aus eigener Simulation"
 START_SOURCE_KEY = "start_source_sim"    # boolean in generation_json / the public card and summary
-# where a generation record (publication item, public summary, review item) names its parents
+# where an older review item (without the service's start_source field) names its parents
 _PARENT_KEYS = ("parents", "compose", "composition", "segments", "effective")
 _PARENT_ID_KEYS = ("generation_id", "id", "source")
 _MAX_DEPTH = 32
 
 
-def _sim_value(d: dict) -> bool:
-    labels = d.get("labels")
-    return ((isinstance(labels, dict) and labels.get(START_SOURCE_LABEL) == START_SOURCE_SIM)
-            or d.get(START_SOURCE_LABEL) == START_SOURCE_SIM)
+def _is_sim(v: Any) -> bool:
+    return isinstance(v, str) and v == START_SOURCE_SIM
 
 
-def start_source_sim(record: Any, lookup: Callable[[str], Any] | None = None) -> bool:
-    """True when a generation, or any parent of a compose (through any chain), carries the label
-    `start_source: "isaac-sim"` (start frame/references from our own simulation).
+def start_source_sim(summary: Any) -> bool:
+    """Publications path: True when the service's whitelisted field says `start_source: "isaac-sim"`.
 
-    `record` is a raw service object: a publication item, a public summary or a review item. Labels are
-    read from `labels.start_source` (or a flat `start_source`); parents from `parents`, `compose.parents`,
-    `effective.parents` and `composition.segments` (also nested `models`/`parents` of a segment). A
-    parent given only by its generation id is resolved with `lookup(id)` (the review feed) when given."""
+    `summary` is a public summary (or a publication list item, or our stored generation_json). Only the
+    field `start_source` counts: at the top level (the service already inherits it from any compose
+    parent at any depth) or on any `composition.segments[]` (per cut). Labels are never read here."""
+    if not isinstance(summary, dict):
+        return False
+    if _is_sim(summary.get(START_SOURCE_LABEL)):
+        return True
+    comp = summary.get("composition")
+    segments = comp.get("segments") if isinstance(comp, dict) else None
+    return isinstance(segments, list) and any(isinstance(s, dict) and _is_sim(s.get(START_SOURCE_LABEL))
+                                              for s in segments)
+
+
+def review_start_source_sim(record: Any, lookup: Callable[[str], Any] | None = None) -> bool:
+    """Review/preview path: the item's top-level `start_source` (already inherited by the service) decides
+    when the item has that field. Older review items without it fall back to `labels.start_source` on the
+    item or any parent of a compose (`parents`, `compose.parents`, `effective.parents`,
+    `composition.segments`, recursively); a parent given only by its generation id is resolved with
+    `lookup(id)` (the review feed), and a parent that has the field is decided by it."""
     seen: set[str] = set()
 
     def walk(obj: Any, depth: int) -> bool:
@@ -96,7 +108,10 @@ def start_source_sim(record: Any, lookup: Callable[[str], Any] | None = None) ->
             return any(walk(x, depth + 1) for x in obj)
         if not isinstance(obj, dict):
             return False
-        if _sim_value(obj):
+        if START_SOURCE_LABEL in obj:                 # the service's field: authoritative (null = no)
+            return _is_sim(obj[START_SOURCE_LABEL])
+        labels = obj.get("labels")
+        if isinstance(labels, dict) and _is_sim(labels.get(START_SOURCE_LABEL)):
             return True
         for k in _PARENT_KEYS:
             if k in obj and walk(obj[k], depth + 1):

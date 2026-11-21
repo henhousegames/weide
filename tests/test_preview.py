@@ -960,3 +960,24 @@ def test_preview_cards_show_start_source_sim(henhouse_db, monkeypatch):
     assert c.get("/api/posts/vs-g_cut1").json()["preview"]["start_source_sim"] is True
     js = (preview.PREVIEW_STATIC / "preview.js").read_text()
     assert "Startbild aus eigener Simulation" in js and "start_source_sim" in js
+
+
+def test_preview_cards_use_top_level_start_source(henhouse_db, monkeypatch):
+    """Current review items carry the service's `start_source` (already inherited through compose parents):
+    it decides; labels/parent lookup only for older items without the field (test above)."""
+    monkeypatch.setattr(preview_auth, "FAIL_DELAY", 0)
+    items = [
+        gen("g_field", start_source="isaac-sim"),                                     # no label needed
+        gen("g_nulllabel", start_source=None, labels={"start_source": "isaac-sim"}),  # field null wins
+        gen("g_case", start_source="Isaac-Sim"),
+        gen("g_compose", task="compose", start_source="isaac-sim", compose={"parents": ["g_x"]}),
+        gen("g_old", task="compose", compose={"parents": ["g_field"]}),               # older item: lookup, field of parent
+    ]
+    a = preview.create_preview_app(henhouse_db, token=TOKEN, settings=ReviewSettings(BASE, REVIEW_KEY),
+                                   transport=httpx.MockTransport(FakeService(items)), poll_interval=None)
+    asyncio.run(a.state.store.poll_once())
+    c = TestClient(a, base_url="http://preview-host.example:18510")
+    assert login(c).status_code == 303
+    ids = by_id(c.get("/api/feed?limit=100").json()["items"])
+    sim = {k.removeprefix("vs-"): v["preview"]["start_source_sim"] for k, v in ids.items() if str(k).startswith("vs-")}
+    assert sim == {"g_field": True, "g_nulllabel": False, "g_case": False, "g_compose": True, "g_old": True}

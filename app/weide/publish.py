@@ -31,9 +31,10 @@ so a rerun never duplicates; caption/character/summary changes update it (keepin
 exist. Media go to <media root>/gen/<public_id>.<ext> (sha256 from the list verified), a 540 px poster to
 <thumb root>/540/gen/<public_id>.jpg: the service poster (scaled with ffmpeg, or kept as is when it is a
 JPEG and ffmpeg is missing), else a frame of the media (ffmpeg; skipped without it).
-Start source: when the list item or the summary, or any parent of a compose (`parents`, `compose.parents`,
-`composition.segments`, recursively), has the label `start_source: "isaac-sim"`, the record gets
+Start source: when the summary's whitelisted field `start_source` is "isaac-sim" (top level, already inherited
+from any compose parent by the service, or any `composition.segments[].start_source`), the record gets
 `start_source_sim: true` (generation.start_source_sim); the public card shows "Startbild aus eigener Simulation".
+Labels are never read for this (the public summary carries none).
 Inputs: only inputs the summary marks `published: true` with a `source_public_id` are kept, as a
 reference to that publication's own post (shown at export only if that post is published here);
 every other input is a "privater Input". Input media are not downloaded (they are posts of their own).
@@ -135,7 +136,7 @@ class Publication:
     media_url: str
     summary_url: str
     poster_url: str | None = None
-    start_source_sim: bool = False     # the item (or a parent) has labels.start_source == "isaac-sim"
+    start_source_sim: bool = False     # the item's own start_source field is "isaac-sim" (list items lack it today)
 
     @property
     def kind(self) -> str:
@@ -313,7 +314,7 @@ def _input(x: Any) -> dict:
 def public_record(summary: dict, pub: Publication) -> dict:
     """generation_json for the post: the service summary sanitized again, ids/URLs that belong to the
     service removed, inputs reduced to public references, model_label filled from the model,
-    start_source_sim set when the item, the summary or any parent says so (only true is stored)."""
+    start_source_sim set when the summary's start_source field (or a segment's) says so (only true is stored)."""
     inputs = summary.get("inputs")
     s = sanitize({k: v for k, v in summary.items() if k not in SUMMARY_DROP and k != "inputs"}) or {}
     if inputs is not None:

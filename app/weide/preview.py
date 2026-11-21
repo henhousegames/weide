@@ -47,7 +47,7 @@ from starlette.background import BackgroundTask
 
 from . import config
 from .db import parse_time
-from .generation import model_short_label, start_source_sim
+from .generation import model_short_label, review_start_source_sim
 from .preview_auth import install_auth, load_key
 from .preview_login import LinkStore, OwnerAutoLogin, owner_logins
 from .review import DRAFT_STATUS, GEN_ID, LAB_PATH, SLUG, ReviewClient, ReviewError, ReviewItem, ReviewSettings
@@ -300,9 +300,9 @@ def classify(it: ReviewItem, published_ids: set[str]) -> str | None:
 
 
 def item_start_source_sim(it: ReviewItem, items: dict[str, ReviewItem]) -> bool:
-    """The item or any parent (looked up in the feed by generation id, recursively) is labelled
-    start_source "isaac-sim"."""
-    return start_source_sim(it.provenance, lambda gid: items[gid].provenance if gid in items else None)
+    """The item's `start_source` is "isaac-sim"; for older items without that field, the item or any parent
+    (looked up in the feed by generation id, recursively) is labelled start_source "isaac-sim"."""
+    return review_start_source_sim(it.provenance, lambda gid: items[gid].provenance if gid in items else None)
 
 
 def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request: Request,
