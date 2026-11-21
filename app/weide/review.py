@@ -1,22 +1,23 @@
 """Read-only adapter for the generation service's review API (used by the private preview only).
 
-The review API is not final yet, so everything that knows its shape lives here (`ReviewClient`,
-`ReviewItem.parse`). Assumed shape (bearer key with the read-only scope `review`):
+Everything that knows the API's shape lives here (`ReviewClient`, `ReviewItem.parse`). Bearer key with the
+read-only scope `review` (see the service's docs/API.md, "Review (private preview)"):
 
-  GET {base}/api/v1/review/generations[?since=<cursor>]
-      -> {"items": [{id, status, task, model, model_label?, labels{}, prompt_original,
-                     created_at?, finished_at?, updated_at?,
-                     output: {kind: video|image, mime?, ...} | null,
-                     media: {output: url, poster: url?}          (or top-level output_url / poster_url),
+  GET {base}/api/v1/review/generations[?since=<finished_at>&limit=<n>]
+      -> {"items": [{id, status: ready_for_review|published, created_at, finished_at, task,
+                     model: {id, display_name}, labels: {}, prompt_original,
+                     output: {mime, width, height, fps, duration_s, has_audio, sha256},   (images: fps/duration_s null)
+                     media: {output: "/api/v1/review/generations/<id>/media/output", poster: ".../media/poster"},
                      publication: null | {public_id, character, caption, approved_at, revoked_at},
-                     lab_path?}],
-          "next_since": <opaque cursor>}
-      ("generations" is accepted instead of "items", "since" instead of "next_since".)
+                     lab_path: "/#/g/<id>"}],
+          "next_since": <finished_at of the last item>, "has_more": bool}
   GET <media url> (Range supported) -> the output video/image or the poster.
 
-Without `since` the answer is the full current set; with it, only items changed after the cursor (upserts).
-Relative URLs are resolved against the base URL. The key is only ever sent to the service's own origin
-and never appears in errors, logs or responses. This module never imports the publishing code and
+Ordered by (finished_at, id); `next_since` is passed back as `since` and pages are fetched while `has_more`.
+`status` is not sent (the default is both listable statuses). The cursor follows finished_at, so a later
+approval or revocation of an item already seen does not come back: the caller re-reads the full list now
+and then. Relative URLs are resolved against the base URL. The key is only ever sent to the service's own
+origin and never appears in errors, logs or responses. This module never imports the publishing code and
 never reads HENHOUSE_SERVICE_KEY (the publish key).
 
 Settings (environment only, e.g. a private systemd EnvironmentFile):
@@ -36,7 +37,11 @@ from . import config
 
 GENERATIONS_PATH = "/api/v1/review/generations"
 DRAFT_STATUS = "ready_for_review"
-HIDDEN_STATUSES = {"failed", "cancelled", "canceled", "unavailable"}
+PUBLISHED_STATUS = "published"
+LISTED_STATUSES = {DRAFT_STATUS, PUBLISHED_STATUS}    # the only statuses the API lists; anything else is ignored
+PAGE_LIMIT = 500                  # the API's maximum page size
+MAX_PAGES = 1000                  # guard against a cursor that never ends
+LAB_PATH = re.compile(r"^/#/g/[A-Za-z0-9_-]{1,80}$")
 GEN_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -88,9 +93,8 @@ class Publication:
     def parse(cls, d: Any) -> "Publication | None":
         if not isinstance(d, dict) or not _str(d.get("public_id")):
             return None
-        revoked = _str(d.get("revoked_at")) or ("revoked" if d.get("status") == "revoked" else None)
         return cls(public_id=str(d["public_id"]), character=_str(d.get("character")), caption=_str(d.get("caption")),
-                   approved_at=_str(d.get("approved_at")), revoked_at=revoked)
+                   approved_at=_str(d.get("approved_at")), revoked_at=_str(d.get("revoked_at")))
 
 
 @dataclass
@@ -98,8 +102,8 @@ class ReviewItem:
     id: str
     status: str
     task: str | None
-    model: str | None
-    model_label: str | None
+    model: str | None                  # model id
+    model_label: str | None            # model display_name
     labels: dict
     prompt: str | None
     created_at: str | None
@@ -108,10 +112,15 @@ class ReviewItem:
     output_url: str | None
     poster_url: str | None
     publication: Publication | None
+    lab_path: str | None = None
+    width: int | None = None
+    height: int | None = None
+    duration_s: float | None = None
+    has_audio: bool | None = None
 
     @property
     def visible(self) -> bool:
-        return self.status not in HIDDEN_STATUSES
+        return self.status in LISTED_STATUSES
 
     @classmethod
     def parse(cls, d: Any) -> "ReviewItem":
@@ -122,25 +131,34 @@ class ReviewItem:
             raise ReviewError("review item has no valid id")
         media = d.get("media") if isinstance(d.get("media"), dict) else {}
         output = d.get("output") if isinstance(d.get("output"), dict) else {}
-        out_url = _str(media.get("output")) or _str(d.get("output_url")) or _str(output.get("url"))
-        poster = _str(media.get("poster")) or _str(d.get("poster_url")) or _str(output.get("poster_url"))
-        kind = _str(output.get("kind")) or _str(output.get("type"))
-        mime = _str(output.get("mime")) or _str(output.get("content_type")) or ""
-        if kind not in ("video", "image"):
-            kind = ("video" if mime.startswith("video/") else "image" if mime.startswith("image/")
-                    else "image" if d.get("task") == "t2i" else "video" if out_url else None)
+        model = d.get("model")
+        model_id, model_label = ((_str(model.get("id")), _str(model.get("display_name"))) if isinstance(model, dict)
+                                 else (_str(model), None))
+        out_url, poster = _str(media.get("output")), _str(media.get("poster"))
+        mime = _str(output.get("mime")) or ""
+        kind = ("video" if mime.startswith("video/") else "image" if mime.startswith("image/")
+                else "image" if d.get("task") == "t2i" else "video" if out_url else None)
         labels = d.get("labels") if isinstance(d.get("labels"), dict) else {}
-        return cls(id=gid, status=str(d.get("status") or ""), task=_str(d.get("task")), model=_str(d.get("model")),
-                   model_label=_str(d.get("model_label")), labels=labels,
-                   prompt=_str(d.get("prompt_original")) or _str(d.get("prompt")),
-                   created_at=_str(d.get("created_at")),
-                   finished_at=_str(d.get("finished_at")) or _str(d.get("updated_at")),
+        lab_path = _str(d.get("lab_path"))
+        return cls(id=gid, status=str(d.get("status") or ""), task=_str(d.get("task")), model=model_id,
+                   model_label=model_label, labels=labels, prompt=_str(d.get("prompt_original")),
+                   created_at=_str(d.get("created_at")), finished_at=_str(d.get("finished_at")),
                    output_kind=kind, output_url=out_url, poster_url=poster,
-                   publication=Publication.parse(d.get("publication")))
+                   publication=Publication.parse(d.get("publication")),
+                   lab_path=lab_path if lab_path and LAB_PATH.match(lab_path) else None,
+                   width=_num(output.get("width"), int), height=_num(output.get("height"), int),
+                   duration_s=_num(output.get("duration_s"), float),
+                   has_audio=output.get("has_audio") if isinstance(output.get("has_audio"), bool) else None)
+
+
+def _num(v: Any, typ: type) -> Any:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return typ(v)
 
 
 class ReviewClient:
-    """The only code that talks to the service's review API (adapt here when it is final)."""
+    """The only code that talks to the service's review API."""
 
     def __init__(self, settings: ReviewSettings, transport: httpx.AsyncBaseTransport | None = None,
                  timeout: float = 30):
@@ -164,10 +182,13 @@ class ReviewClient:
         # the key only goes to the service itself, never to another host (e.g. signed storage URLs)
         return {"Authorization": f"Bearer {self.settings.key}"} if _origin(url) == self.origin else {}
 
-    async def generations(self, since: str | None = None) -> tuple[list[dict], str | None]:
+    async def _page(self, since: str | None) -> tuple[list, str | None, bool]:
         url = self.settings.base_url + GENERATIONS_PATH
+        params = {"limit": str(PAGE_LIMIT)}
+        if since:
+            params["since"] = since
         try:
-            r = await self.http.get(url, params={"since": since} if since else None, headers=self._headers(url))
+            r = await self.http.get(url, params=params, headers=self._headers(url))
         except httpx.HTTPError as e:
             raise ReviewError(self.redact(f"review API unreachable: {type(e).__name__}")) from None
         if r.status_code != 200:
@@ -176,13 +197,25 @@ class ReviewClient:
             data = r.json()
         except ValueError:
             raise ReviewError("review API answered no JSON") from None
-        if not isinstance(data, dict):
-            raise ReviewError("review API answered an unexpected shape")
-        items = data.get("items", data.get("generations"))
-        if not isinstance(items, list):
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
             raise ReviewError("review API answer has no item list")
-        cursor = data.get("next_since", data.get("since"))
-        return items, (str(cursor) if cursor not in (None, "") else None)
+        cursor = data.get("next_since")
+        return data["items"], (str(cursor) if cursor not in (None, "") else since), data.get("has_more") is True
+
+    async def generations(self, since: str | None = None) -> tuple[list[dict], str | None]:
+        """All items finished after `since` (None: the full list), paging while `has_more`.
+        Returns the raw items and the cursor for the next poll."""
+        items: list = []
+        cursor = since
+        for _ in range(MAX_PAGES):
+            page, nxt, more = await self._page(cursor)
+            items += page
+            if not more:
+                return items, nxt
+            if nxt == cursor:
+                raise ReviewError("review API cursor does not advance")
+            cursor = nxt
+        raise ReviewError("review API has too many pages")
 
     async def open_media(self, ref: str, range_header: str | None = None) -> httpx.Response:
         """Start streaming a media URL (caller must close the response). Range is passed through."""

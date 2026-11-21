@@ -25,13 +25,20 @@ REVIEW_KEY = "EXAMPLE-review-key-" + "y" * 30
 BASE = "http://service.test:18500"
 
 
+MODEL = {"id": "ltx-2.5-distilled", "display_name": "LTX-2.5 22B distilled"}
+VIDEO_OUT = {"mime": "video/mp4", "width": 768, "height": 1344, "fps": 24.0, "duration_s": 5.04, "has_audio": True,
+             "sha256": "a" * 64}
+IMAGE_OUT = {"mime": "image/png", "width": 864, "height": 1536, "fps": None, "duration_s": None, "has_audio": False,
+             "sha256": "b" * 64}
+
+
 def gen(gid, status="ready_for_review", **kw):
-    d = {"id": gid, "status": status, "task": "t2v", "model": "ltx-2.5-distilled", "labels": {},
-         "prompt_original": f"prompt of {gid}", "created_at": "2026-11-20T09:00:00Z",
-         "finished_at": "2026-11-20T10:00:00Z", "output": {"kind": "video", "mime": "video/mp4"},
+    """One item exactly as GET /api/v1/review/generations lists it."""
+    d = {"id": gid, "status": status, "created_at": "2026-11-20T09:00:00Z", "finished_at": "2026-11-20T10:00:00Z",
+         "task": "t2v", "model": MODEL, "labels": {}, "prompt_original": f"prompt of {gid}", "output": VIDEO_OUT,
          "media": {"output": f"/api/v1/review/generations/{gid}/media/output",
                    "poster": f"/api/v1/review/generations/{gid}/media/poster"},
-         "publication": None, "lab_path": f"#/g/{gid}"}
+         "publication": None, "lab_path": f"/#/g/{gid}"}
     d.update(kw)
     return d
 
@@ -47,21 +54,44 @@ GENERATIONS = [
     gen("g_draft2", finished_at="2026-11-19T10:00:00Z"),                          # no character, no caption
     gen("g_draft3", labels={"character": "nobody-xyz"}),                          # unknown character
     gen("g_appr", publication=pub("pubNEW")),
-    gen("g_live", publication=pub("pubLIVE")),                                   # already a published post
+    gen("g_live", "published", publication=pub("pubLIVE")),                      # already a published post
     gen("g_revoked", publication=pub("pubOLD", revoked_at="2026-11-20T13:00:00Z"),
         labels={"caption": "Zurückgezogen"}),
-    gen("g_fail", status="failed", labels={"caption": "FAILED-CAPTION"}),
-    gen("g_cancel", status="cancelled", publication=pub("pubCANCEL"), labels={"caption": "CANCELLED-CAPTION"}),
-    gen("g_running", status="running", labels={"caption": "RUNNING-CAPTION"}),
+    gen("g_pubappr", "published", publication=pub("pubPUB", caption="Status published",
+                                                  approved_at="2026-11-20T11:30:00Z")),
+    gen("g_pubrev", "published", publication=pub("pubREV", revoked_at="2026-11-20T13:00:00Z"),
+        labels={"caption": "REVOKED-PUBLISHED-CAPTION"}),                       # revoked, not ready_for_review: hidden
+    gen("g_img", task="t2i", output=IMAGE_OUT, labels={"character": "lisa", "caption": "Ein Standbild"},
+        finished_at="2026-11-20T08:00:00Z"),
 ]
 VIDEO = bytes(range(256)) * 4
+LISTED = {"ready_for_review", "published"}
 
 
 class FakeService:
+    """The review API: (finished_at, id) cursor, `since` = finished after, pages of `limit` that never end
+    inside a group of equal finished_at, `has_more`; `status` other than the two listed ones is a 422."""
+
     def __init__(self, items=None):
         self.items = list(GENERATIONS if items is None else items)
         self.requests: list[httpx.Request] = []
         self.fail = False
+        self.max_limit = 500
+
+    def list(self, request: httpx.Request) -> httpx.Response:
+        q = request.url.params
+        statuses = set(q.get("status", "ready_for_review,published").split(","))
+        if not statuses <= LISTED:
+            return httpx.Response(422, json={"error": {"code": "validation", "field": "status"}})
+        since, limit = q.get("since"), min(int(q.get("limit", 100)), self.max_limit)
+        rows = sorted((i for i in self.items if i["status"] in statuses and (since is None or i["finished_at"] > since)),
+                      key=lambda i: (i["finished_at"], i["id"]))
+        n = min(limit, len(rows))
+        while 0 < n < len(rows) and rows[n]["finished_at"] == rows[n - 1]["finished_at"]:
+            n += 1
+        page = rows[:n]
+        return httpx.Response(200, json={"items": page, "next_since": page[-1]["finished_at"] if page else since,
+                                         "has_more": len(rows) > n})
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -71,7 +101,10 @@ class FakeService:
             return httpx.Response(503)
         path = request.url.path
         if path == "/api/v1/review/generations":
-            return httpx.Response(200, json={"items": self.items, "next_since": "cursor-1"})
+            return self.list(request)
+        gid = path.split("/")[5] if path.startswith("/api/v1/review/generations/") else None
+        if gid not in {i["id"] for i in self.items}:
+            return httpx.Response(404)
         if path.endswith("/media/output"):
             rng = request.headers.get("range")
             if rng:
@@ -84,6 +117,11 @@ class FakeService:
         if path.endswith("/media/poster"):
             return httpx.Response(200, content=b"\xff\xd8poster", headers={"content-type": "image/jpeg"})
         return httpx.Response(404)
+
+    def set(self, gid, **kw):
+        for i, it in enumerate(self.items):
+            if it["id"] == gid:
+                self.items[i] = {**it, **kw}
 
 
 @pytest.fixture(autouse=True)
@@ -289,8 +327,8 @@ def test_feed_has_three_kinds_with_markers(client):
     published = [i for i in items if not str(i["id"]).startswith("vs-")]
     assert len(published) == 41 and all("preview" not in i for i in published)
     blob = json.dumps(items)
-    for hidden in ("g_fail", "g_cancel", "g_running", "g_live", "FAILED-CAPTION", "CANCELLED-CAPTION",
-                   "RUNNING-CAPTION"):
+    assert ids["vs-g_pubappr"]["preview"]["state"] == "approved"
+    for hidden in ("g_live", "g_pubrev", "REVOKED-PUBLISHED-CAPTION"):
         assert hidden not in blob, hidden
     # approved + already published shows up once, as the normal post
     assert sum(1 for i in items if i["caption"] == "Schon live") == 1
@@ -307,7 +345,8 @@ def test_author_and_caption_fallbacks(client):
     assert d1["account"]["slug"] == "lisa" and d1["caption"] == "Lisa testet den Melkroboter"
     assert d1["account"]["avatar_url"] == "/avatar/lisa.jpg"
     assert d2["account"]["slug"] == "studio-entwurf" and d2["account"]["display_name"] == "Studio (Entwurf)"
-    assert d2["caption"] == "ltx-2.5-distilled · 19.11.2026"
+    assert d2["caption"] == "LTX-2.5 22B distilled · 19.11.2026"
+    assert d2["preview"]["model"] == "LTX-2.5 22B distilled"
     assert d3["account"]["slug"] == "studio-entwurf"
     assert ids["vs-g_appr"]["account"]["slug"] == "lisa" and ids["vs-g_appr"]["caption"] == "Bald live"
     assert ids["vs-g_revoked"]["caption"] == "Zurückgezogen"
@@ -324,6 +363,112 @@ def test_lab_link_uses_request_host(client):
     assert by_id(other)["vs-g_draft1"]["preview"]["lab_url"] == "http://127.0.0.1:18500/#/g/g_draft1"
     assert d["media_url"] == "/preview/media/g_draft1/output" and d["poster_url"] == "/preview/media/g_draft1/poster"
     assert d["media_kind"] == "video" and d["kind"] == "reel"
+
+
+def _clocked_app(henhouse_db, service, now):
+    a = preview.create_preview_app(henhouse_db, token=TOKEN, settings=ReviewSettings(BASE, REVIEW_KEY),
+                                   transport=httpx.MockTransport(service), poll_interval=None)
+    a.state.store.clock = lambda: now[0]
+    return a
+
+
+def _states(c) -> dict:
+    return {i["id"]: i["preview"]["state"] for i in c.get("/api/feed?limit=100").json()["items"] if "preview" in i}
+
+
+def _list_requests(service):
+    return [r for r in service.requests if r.url.path == "/api/v1/review/generations"]
+
+
+def test_paging_follows_has_more(henhouse_db, service):
+    service.max_limit = 2
+    a = _clocked_app(henhouse_db, service, [0.0])
+    asyncio.run(a.state.store.poll_once())
+    assert set(a.state.store.items) == {g["id"] for g in GENERATIONS}
+    reqs = _list_requests(service)
+    assert "since" not in reqs[0].url.params and all("since" in r.url.params for r in reqs[1:])
+    assert all("status" not in r.url.params for r in reqs)          # default: both listed statuses
+    # the second page grows past the limit instead of splitting the six items finished at 10:00
+    assert [r.url.params.get("since") for r in reqs] == [None, "2026-11-20T08:00:00Z", "2026-11-20T10:00:00Z"]
+    assert a.state.store.cursor == "2026-11-20T11:00:00Z"
+
+
+def test_cursor_that_does_not_advance_is_an_error(henhouse_db):
+    def stuck(request):
+        return httpx.Response(200, json={"items": [gen("g_x")], "next_since": request.url.params.get("since"),
+                                         "has_more": True})
+    a = _failing_app(henhouse_db, stuck)
+    asyncio.run(a.state.store.poll_once())
+    assert a.state.store.state == "down" and "cursor" in a.state.store.error
+
+
+def test_incremental_polls_and_full_reload_every_10_minutes(henhouse_db, service):
+    now = [1000.0]
+    a = _clocked_app(henhouse_db, service, now)
+    store = a.state.store
+    asyncio.run(store.poll_once())
+    c = TestClient(a)
+    login(c)
+    assert _states(c)["vs-g_draft1"] == "draft" and _states(c)["vs-g_appr"] == "approved"
+    # new item: picked up by the next incremental poll (since = cursor)
+    service.items.append(gen("g_new", finished_at="2026-11-20T14:00:00Z"))
+    # later approval / revocations of items already seen: not reported through the cursor
+    service.set("g_draft1", publication=pub("pubD1", approved_at="2026-11-20T15:00:00Z"))
+    service.set("g_appr", publication=pub("pubNEW", revoked_at="2026-11-20T15:00:00Z"))
+    service.set("g_pubappr", publication=pub("pubPUB", revoked_at="2026-11-20T15:00:00Z"))
+    service.items = [i for i in service.items if i["id"] != "g_draft3"]
+    now[0] += 60
+    asyncio.run(store.poll_once())
+    assert _list_requests(service)[-1].url.params["since"] == "2026-11-20T11:00:00Z"
+    st = _states(c)
+    assert st["vs-g_new"] == "draft" and st["vs-g_draft1"] == "draft" and st["vs-g_appr"] == "approved"
+    assert "vs-g_draft3" in st
+    now[0] += preview.FULL_RELOAD_SECONDS - 61                         # still incremental just before 10 min
+    asyncio.run(store.poll_once())
+    assert "since" in _list_requests(service)[-1].url.params and _states(c)["vs-g_draft1"] == "draft"
+    now[0] += 1                                                        # 10 min after the last full reload
+    asyncio.run(store.poll_once())
+    assert "since" not in _list_requests(service)[-1].url.params
+    st = _states(c)
+    assert st["vs-g_draft1"] == "approved"                            # later approval
+    assert st["vs-g_appr"] == "draft"                                 # revoked, ready_for_review: draft again
+    assert "vs-g_pubappr" not in st                                   # revoked, status published: hidden
+    assert "vs-g_draft3" not in st and "vs-g_new" in st               # gone from the list: dropped
+    # the next poll is incremental again
+    now[0] += 60
+    asyncio.run(store.poll_once())
+    assert _list_requests(service)[-1].url.params["since"] == "2026-11-20T14:00:00Z"
+
+
+def test_image_item_renders_as_image_post(client):
+    d = by_id(client.get("/api/feed?limit=100").json()["items"])["vs-g_img"]
+    assert d["kind"] == "image" and d["media_kind"] == "image" and d["caption"] == "Ein Standbild"
+    assert d["media_url"] == "/preview/media/g_img/output" and d["poster_url"] == "/preview/media/g_img/poster"
+    assert d["preview"]["task"] == "t2i" and d["preview"]["lab_url"] == "http://preview-host.example:18500/#/g/g_img"
+    it = client.app.state.store.items["g_img"]
+    assert it.duration_s is None and it.has_audio is False and (it.width, it.height) == (864, 1536)
+
+
+def test_approved_is_not_duplicated_when_already_published(client, service):
+    items = client.get("/api/feed?limit=100").json()["items"]
+    assert "vs-g_live" not in by_id(items) and sum(1 for i in items if i["caption"] == "Schon live") == 1
+    # also when the generation is still ready_for_review: the public_id decides
+    service.items.append(gen("g_live2", publication=pub("pubLIVE"), finished_at="2026-11-20T16:00:00Z"))
+    service.set("g_pubappr", publication=pub("pubLIVE", caption="Status published"))
+    client.app.state.store.cursor = None
+    asyncio.run(client.app.state.store.poll_once())
+    st = _states(client)
+    assert "vs-g_live2" not in st and "vs-g_pubappr" not in st and st["vs-g_appr"] == "approved"
+
+
+def test_bad_lab_path_falls_back_to_generation_id(henhouse_db):
+    svc = FakeService([gen("g_odd", lab_path="javascript:alert(1)")])
+    a = _clocked_app(henhouse_db, svc, [0.0])
+    asyncio.run(a.state.store.poll_once())
+    c = TestClient(a, base_url="http://preview-host.example:18510")
+    login(c)
+    d = by_id(c.get("/api/feed?limit=100").json()["items"])["vs-g_odd"]
+    assert d["preview"]["lab_url"] == "http://preview-host.example:18500/#/g/g_odd"
 
 
 def test_feed_filters_and_pagination(client):
@@ -343,7 +488,7 @@ def test_feed_filters_and_pagination(client):
 def test_preview_post_detail(client):
     p = client.get("/api/posts/vs-g_draft1").json()
     assert p["comments"] == [] and p["moments"] == [] and p["preview"]["prompt"] == "prompt of g_draft1"
-    assert client.get("/api/posts/vs-g_fail").status_code == 404
+    assert client.get("/api/posts/vs-g_pubrev").status_code == 404
     assert client.get("/api/posts/vs-g_live").status_code == 404
     assert client.get("/api/posts/1").json()["id"] == 1
 
@@ -356,7 +501,7 @@ def test_media_proxy_streams_with_range_and_hides_key(client, service):
     assert sent.headers["range"] == "bytes=10-19" and sent.headers["authorization"] == f"Bearer {REVIEW_KEY}"
     assert client.get("/preview/media/g_draft1/output").content == VIDEO
     assert client.get("/preview/media/g_draft1/poster").headers["content-type"] == "image/jpeg"
-    assert client.get("/preview/media/g_fail/output").status_code == 404
+    assert client.get("/preview/media/g_missing/output").status_code == 404
     assert client.get("/preview/media/g_draft1/manifest").status_code == 404
     assert client.get("/preview/media/unknown/output").status_code == 404
 
@@ -378,11 +523,11 @@ def test_key_never_in_responses_or_logs(client, service, caplog):
 
 def test_status_and_unreachable_service(client, service):
     s = client.get("/api/preview/status").json()
-    assert s["connected"] and s["generations"] == 7 and s["last_poll"] and s["error"] is None
+    assert s["connected"] and s["generations"] == 9 and s["last_poll"] and s["error"] is None
     service.fail = True
     asyncio.run(client.app.state.store.poll_once())
     s = client.get("/api/preview/status").json()
-    assert s["error"] and s["generations"] == 7          # last good state is kept
+    assert s["error"] and s["generations"] == 9          # last good state is kept
 
 
 def test_without_service_settings_shows_published_only(henhouse_db, monkeypatch):

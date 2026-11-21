@@ -77,6 +77,8 @@ journalctl --user -u henhouse-preview -f
 
 ## Review API
 
-The service's review API is not final; the assumed shape is documented in `app/weide/review.py`
-(`ReviewClient` and `ReviewItem.parse` are the only places that need to change). The service is polled
-every 60 s (`since` cursor, with a full refresh every 30 polls); the state is kept in memory only.
+The shape of the service's review API (`GET /api/v1/review/generations`, see the service's
+docs/API.md, "Review (private preview)") is handled in `app/weide/review.py` (`ReviewClient` and
+`ReviewItem.parse`). The service is polled every 60 s for what finished after the `since` cursor (paging
+while `has_more`); every 10 min the full list is re-read, since a later approval or revocation of an item
+already seen does not come back through the cursor. The state is kept in memory only.
