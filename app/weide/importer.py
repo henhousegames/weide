@@ -92,12 +92,18 @@ def _import_post(con: sqlite3.Connection, card: dict, accounts: dict[str, int]) 
     aid = accounts.get(slug) or _account_from_brief(con, card["account"])
     media = _strip(card.get("media_url"), _MEDIA)
     parent = card.get("parent") or None
+    row = con.execute("SELECT meta_json FROM posts WHERE id=?", (int(card["id"]),)).fetchone()
+    meta = (jload(row["meta_json"], {}) if row else {}) or {}       # keep private writer keys (legacy import)
+    if card.get("episode"):
+        meta["episode"] = card["episode"]
+    else:
+        meta.pop("episode", None)
     return upsert_post(
         con, id=int(card["id"]), account_id=aid, parent_id=int(parent["id"]) if parent else None, kind=card["kind"],
         title=card.get("title"), caption=card.get("caption"), hashtags=card.get("hashtags"), media=media,
         poster=_poster(card, media), posted_at=card["posted_at"], source=card.get("source"),
         clip_id=card.get("clip_id"), funny_score=card.get("funny_score"), why=card.get("why"),
-        meta={"episode": card["episode"]} if card.get("episode") else None,
+        meta=meta or None,
         status="published", generation_json=None)
 
 
@@ -105,7 +111,8 @@ def _sync_reactions(con: sqlite3.Connection, pid: int, totals: dict[str, int], u
                     uwe_id: int | None) -> None:
     if uwe_id is not None:
         con.execute("DELETE FROM reactions WHERE post_id=? AND account_id=? AND source=?", (pid, uwe_id, IMPORT_SOURCE))
-        if uwe_reacted:
+        named = con.execute("SELECT 1 FROM reactions WHERE post_id=? AND account_id=?", (pid, uwe_id)).fetchone()
+        if uwe_reacted and not named:          # real named reactions (legacy import) win over the placeholder
             rtype = next((t for t in config.REACTION_TYPES if totals.get(t, 0) > 0), "lol")
             add_named_reaction(con, pid, uwe_id, rtype, source=IMPORT_SOURCE)
     for rtype in config.REACTION_TYPES:
