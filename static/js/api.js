@@ -30,9 +30,11 @@ let feedAll = null;
 
 const staticApi = {
   meta: () => get("data/meta.json"),
-  async feed(offset = 0, limit = 10) {
+  // kinds: optional account kinds (world filter), applied client-side on card.account.kind
+  async feed(offset = 0, limit = 10, kinds = null) {
     feedAll = feedAll || get("data/feed.json");
-    const { items } = await feedAll;
+    let { items } = await feedAll;
+    if (kinds?.length) items = items.filter((i) => kinds.includes(i.account?.kind));
     return { items: items.slice(offset, offset + limit), next_offset: offset + limit < items.length ? offset + limit : null };
   },
   post: (id) => {
@@ -57,7 +59,8 @@ const staticApi = {
 
 const liveApi = {
   meta: () => get("/api/meta"),
-  feed: (offset = 0, limit = 10) => get(`/api/feed?offset=${offset}&limit=${limit}`),
+  feed: (offset = 0, limit = 10, kinds = null) =>
+    get(`/api/feed?offset=${offset}&limit=${limit}${kinds?.length ? `&kind=${encodeURIComponent(kinds.join(","))}` : ""}`),
   post: (id) => get(`/api/posts/${encodeURIComponent(id)}`),
   accounts: () => get("/api/accounts"),
   account: (slug) => get(`/api/accounts/${encodeURIComponent(slug)}`),

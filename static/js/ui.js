@@ -6,7 +6,8 @@ import { compact, h, icons, num, plural, store, when } from "./util.js";
 export const state = { meta: null };
 
 export function earTag(account, { link = true } = {}) {
-  const cls = `tag${account.kind === "human" ? " tag--human" : account.kind === "follower" ? " tag--follower" : account.kind === "house" ? " tag--house" : ""}`;
+  const mod = { human: "human", robot: "robot", follower: "follower", house: "house" }[account.kind];
+  const cls = `tag${mod ? ` tag--${mod}` : ""}`;
   return link
     ? h("a", { class: cls, href: `#/u/${encodeURIComponent(account.slug)}` }, account.handle)
     : h("span", { class: cls }, account.handle);

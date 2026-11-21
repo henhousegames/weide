@@ -15,6 +15,7 @@
   --accent-text: #ffc928;  /* yellow used as text (times in "Mein Tag", pressed 😂) */
   --tag-human: #e7e1cf;
   --tag-house: #eef3e6;
+  --tag-robot: #9fd3df;    /* robots: a cool steel-blue tag, same shape */
   --pink: #f4a6b8;
   --clover: #9bd46a;
   --ember: #ff8a4c;
@@ -42,6 +43,7 @@
     --accent-text: #8a6500;
     --tag-human: #e2dac2;
     --tag-house: #15301f;
+    --tag-robot: #a9d2dc;
     --pink: #b8325e;
     --clover: #3c7a1d;
     --ember: #bf4d16;
@@ -162,6 +164,8 @@ img, video { display: block; max-width: 100%; }
 .tag--follower { background: transparent; color: var(--ink-2); padding-left: 0; font-weight: 600; }
 .tag--follower::before { display: none; }
 .tag--house { background: var(--tag-house); }
+.tag--robot { background: var(--tag-robot); }
+.tag--robot::before { border-radius: 2px; }   /* a rivet instead of a punched hole */
 
 .ranktag {
   flex: none; width: 36px; height: 46px;
@@ -193,6 +197,16 @@ img, video { display: block; max-width: 100%; }
 .mark__tag { fill: var(--tag); }
 .mark__hole { fill: var(--ground); }
 .mark__line { fill: none; stroke: var(--tag-ink); stroke-width: 2; stroke-linecap: round; opacity: .55; }
+
+/* --- feed worlds --------------------------------------------------------------------------- */
+.worlds { display: flex; gap: 8px; padding: 14px 12px 0; overflow-x: auto; scrollbar-width: none; }
+.worlds::-webkit-scrollbar { display: none; }
+.worlds__item {
+  flex: none; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--ground-2);
+  color: var(--ink-2); text-decoration: none; font-size: 14px; font-weight: 650;
+}
+.worlds__item:hover { background: var(--ground-3); color: var(--ink); }
+.worlds__item[aria-current="page"] { background: var(--tag); border-color: var(--tag-edge); color: var(--tag-ink); }
 
 /* --- feed post ----------------------------------------------------------------------------- */
 .feed { display: flex; flex-direction: column; gap: 28px; padding: 14px 0 24px; }

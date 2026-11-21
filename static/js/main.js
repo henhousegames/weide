@@ -1,4 +1,4 @@
-// Hash router: #/  #/p/<id>  #/u/<slug>  #/heute[/<YYYY-MM-DD>]  #/woche[/<YYYY-Www>]  #/leute
+// Hash router: #/  #/w/<world>  #/p/<id>  #/u/<slug>  #/heute[/<YYYY-MM-DD>]  #/woche[/<YYYY-Www>]  #/leute
 import { api } from "./api.js";
 import { resetPlayers } from "./player.js";
 import { state } from "./ui.js";
@@ -18,6 +18,7 @@ function route() {
   const [name = "", arg] = parts;
   switch (name) {
     case "": return { tab: "feed", view: "feed", run: (r) => feedView(r) };
+    case "w": return { tab: "feed", view: "feed", missing: "Diese Welt gibt es nicht.", run: (r) => feedView(r, arg) };
     case "p": return { tab: null, view: "post", missing: "Diesen Post gibt es nicht (mehr).", run: (r) => postView(r, arg) };
     case "u": return { tab: arg === undefined ? "leute" : null, view: "profile", missing: "Dieses Profil gibt es nicht.", run: (r) => profileView(r, arg) };
     case "heute": return { tab: "heute", view: "heute", missing: "Diesen Tag gibt es nicht.", run: (r) => topView(r, "heute", arg) };

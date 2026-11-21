@@ -12,18 +12,42 @@ export function notFound(root, text) {
     h("a", { class: "notfound__link", href: "#/" }, "Zum Feed")));
 }
 
-export async function feedView(root) {
+// Feed worlds (#/w/<world>): filter by the posting account's kind. "Alle" is the plain feed (#/).
+// English and legacy names are accepted as aliases; "mixed"/"alle" mean everything.
+export const WORLDS = [
+  { key: "", label: "Alle", kinds: null },
+  { key: "tiere", label: "Tiere", kinds: ["animal"] },
+  { key: "menschen", label: "Menschen", kinds: ["human"] },
+  { key: "roboter", label: "Roboter", kinds: ["robot"] },
+];
+const WORLD_ALIASES = { alle: "", all: "", mixed: "", animals: "tiere", weide: "tiere", humans: "menschen", robots: "roboter" };
+
+function worldNav(current) {
+  return h("nav", { class: "worlds", "aria-label": "Welten" }, WORLDS.map((w) => h("a", {
+    class: "worlds__item", href: w.key ? `#/w/${w.key}` : "#/", "aria-current": w.key === current ? "page" : null,
+  }, w.label)));
+}
+
+export async function feedView(root, worldArg) {
+  const key = worldArg === undefined ? "" : (WORLD_ALIASES[String(worldArg).toLowerCase()] ?? String(worldArg).toLowerCase());
+  const world = WORLDS.find((w) => w.key === key);
+  if (!world) {
+    const e = new Error("unknown world");
+    e.status = 404;
+    throw e;
+  }
   const list = h("div", { class: "feed" });
   const sentinel = h("div", { class: "sentinel" });
-  mount(root, list, sentinel);
+  mount(root, worldNav(world.key), list, sentinel);
   let offset = 0;
   let loading = false;
   async function more() {
     if (loading || offset === null) return;
     loading = true;
-    const page = await api.feed(offset, PAGE);
+    const page = await api.feed(offset, PAGE, world.kinds);
     if (!page.items.length && offset === 0) {
-      list.append(h("p", { class: "empty empty--pad" }, "Noch keine Posts. Die Creator schlafen noch."));
+      list.append(h("p", { class: "empty empty--pad" }, world.key === "roboter"
+        ? "Noch keine Posts. Die Roboter laden noch." : "Noch keine Posts. Die Creator schlafen noch."));
     }
     list.append(...page.items.map(postCard));
     offset = page.next_offset;
@@ -322,8 +346,9 @@ export async function railView(root) {
 
 export async function peopleView(root) {
   const { items } = await api.accounts();
-  const creators = items.filter((a) => a.kind === "animal");
-  const humans = items.filter((a) => a.kind === "human" || a.kind === "house");
+  // creators: every animal, robot or other character, and humans once they post; regulars: the rest
+  const creators = items.filter((a) => ["animal", "robot", "other"].includes(a.kind) || (a.kind === "human" && a.posts > 0));
+  const humans = items.filter((a) => (a.kind === "human" && !(a.posts > 0)) || a.kind === "house");
   const followers = items.filter((a) => a.kind === "follower");
   const card = (a) => h("li", {}, h("a", { class: "person", href: `#/u/${encodeURIComponent(a.slug)}` },
     avatar(a, 56, false), h("span", { class: "person__name" }, a.display_name), earTag(a, { link: false }),
