@@ -239,6 +239,18 @@ def connect(db_path: str | Path | None = None, init: bool = True) -> sqlite3.Con
     return con
 
 
+def connect_readonly(db_path: str | Path | None = None) -> sqlite3.Connection:
+    """Open an existing database strictly read-only (SQLite URI `mode=ro`): no migration, no writes,
+    never creates the file. Writes fail with sqlite3.OperationalError."""
+    path = Path(db_path or config.DEFAULT_DB).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"database not found: {path.name}")
+    con = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, check_same_thread=False, timeout=10)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA query_only = ON")
+    return con
+
+
 # --- helpers -----------------------------------------------------------------------------------
 
 def now_iso() -> str:

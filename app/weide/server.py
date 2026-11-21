@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config
-from .db import bump_bucket, comment_counts, connect, jload, reaction_totals, resolve_post
+from .db import bump_bucket, comment_counts, connect, connect_readonly, jload, reaction_totals, resolve_post
 from .generation import PUBLIC_ID, public_summary
 from .media import MediaError, avatar_file, media_exists, media_file, media_kind, thumb_file
 from .ranking import combine, engagement, engagement_score, iso_week, today, top, window
@@ -107,22 +107,53 @@ def _csv(v: str | None) -> list[str]:
     return [x.strip() for x in (v or "").split(",") if x.strip()]
 
 
+def feed_page(con: sqlite3.Connection, limit: int, offset: int, *, account: str | None = None,
+              kind: str | None = None, world: str | None = None) -> dict:
+    """One page of the published feed (newest first), optionally filtered by account / kinds / worlds."""
+    q = POST_SQL + f" WHERE p.parent_id IS NULL AND {PUBLISHED}"
+    args: list[Any] = []
+    if account:
+        q += " AND a.slug = ?"
+        args.append(account)
+    kinds = _csv(kind)
+    if kinds:
+        q += f" AND a.kind IN ({','.join('?' * len(kinds))})"
+        args += kinds
+    worlds = _csv(world)
+    if worlds:
+        derived = " ".join(f"WHEN '{k}' THEN '{w}'" for k, w in config.WORLD_BY_KIND.items())
+        q += f" AND COALESCE(a.world, CASE a.kind {derived} END) IN ({','.join('?' * len(worlds))})"
+        args += worlds
+    q += " ORDER BY p.ts DESC, p.id DESC LIMIT ? OFFSET ?"
+    rows = con.execute(q, (*args, limit + 1, offset)).fetchall()
+    return {"items": post_dicts(con, rows[:limit]), "next_offset": offset + limit if len(rows) > limit else None}
+
+
 class ReactBody(BaseModel):
     type: str
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def create_app(db_path: str | Path | None = None, *, readonly: bool = False,
+               setup: Callable[[FastAPI, Callable[[], Any]], None] | None = None) -> FastAPI:
+    """readonly: open the database with SQLite `mode=ro` (no migration, no writes; reactions answer 403).
+    setup(app, db): called before the standard routes are added, so its routes take precedence (preview.py)."""
     db_file = Path(db_path or config.DEFAULT_DB)
-    connect(db_file).close()          # create / migrate schema once
+    if readonly:
+        connect_readonly(db_file).close()     # fail early if missing; never creates or migrates
+    else:
+        connect(db_file).close()          # create / migrate schema once
     app = FastAPI(title=config.APP_NAME, docs_url="/api/docs", redoc_url=None)
 
     @contextmanager
     def db() -> Iterator[sqlite3.Connection]:
-        con = connect(db_file, init=False)
+        con = connect_readonly(db_file) if readonly else connect(db_file, init=False)
         try:
             yield con
         finally:
             con.close()
+
+    if setup is not None:
+        setup(app, db)
 
     index_html = (config.TEMPLATE_DIR / "index.html").read_text(encoding="utf-8")
 
@@ -155,24 +186,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
              kind: str | None = Query(None, description="account kinds, comma separated (animal,human,robot,...)"),
              world: str | None = Query(None, description="worlds, comma separated (weide,menschen,roboter,...)")) -> dict:
         with db() as con:
-            q = POST_SQL + f" WHERE p.parent_id IS NULL AND {PUBLISHED}"
-            args: list[Any] = []
-            if account:
-                q += " AND a.slug = ?"
-                args.append(account)
-            kinds = _csv(kind)
-            if kinds:
-                q += f" AND a.kind IN ({','.join('?' * len(kinds))})"
-                args += kinds
-            worlds = _csv(world)
-            if worlds:
-                derived = " ".join(f"WHEN '{k}' THEN '{w}'" for k, w in config.WORLD_BY_KIND.items())
-                q += f" AND COALESCE(a.world, CASE a.kind {derived} END) IN ({','.join('?' * len(worlds))})"
-                args += worlds
-            q += " ORDER BY p.ts DESC, p.id DESC LIMIT ? OFFSET ?"
-            rows = con.execute(q, (*args, limit + 1, offset)).fetchall()
-            items = post_dicts(con, rows[:limit])
-        return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
+            return feed_page(con, limit, offset, account=account, kind=kind, world=world)
 
     @app.get("/api/posts/{post_id}")
     def post_detail(post_id: str) -> dict:
@@ -197,6 +211,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/posts/{post_id}/react")
     def react(post_id: int, body: ReactBody) -> dict:
+        if readonly:
+            raise HTTPException(403, "read-only")
         if body.type not in config.REACTIONS:
             raise HTTPException(400, f"type must be one of {', '.join(config.REACTION_TYPES)}")
         with db() as con:

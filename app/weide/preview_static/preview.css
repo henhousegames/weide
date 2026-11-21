@@ -1,0 +1,31 @@
+/* Private preview only: fixed banner, marker badges, read-only reactions. */
+:root.pv { --pv-h: 34px; }
+.pv body { padding-top: var(--pv-h); }
+.pv .topbar { top: var(--pv-h); }
+@media (min-width: 1024px) {
+  .pv .side { top: var(--pv-h); height: calc(100vh - var(--pv-h)); }
+  .pv .rail { top: var(--pv-h); }
+}
+.pv-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: var(--pv-h);
+  display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 12px;
+  background: repeating-linear-gradient(135deg, #ffc928 0 14px, #f2b90f 14px 28px); color: #1b1a12;
+  font: 650 13px/1 var(--font, system-ui, sans-serif); letter-spacing: .02em;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, .25);
+}
+.pv-banner__tag { background: #1b1a12; color: #ffc928; padding: 4px 8px; border-radius: 6px; letter-spacing: .12em; }
+.pv-banner__status { opacity: .75; }
+.pv-banner__status:empty { display: none; }
+.pv-marker {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 4px 10px;
+  font-size: 12.5px; font-weight: 700; letter-spacing: .04em;
+}
+.pv-marker__label { padding: 4px 10px; border-radius: 999px; }
+.pv-marker--approved .pv-marker__label { background: var(--clover, #9bd46a); color: #10240f; }
+.pv-marker--draft .pv-marker__label { background: var(--ember, #ff8a4c); color: #1b1a12; }
+.pv-marker__lab { color: var(--accent-text, #ffc928); font-weight: 650; letter-spacing: 0; }
+.pv-marker__model { color: var(--ink-3, #9aa); font-weight: 600; letter-spacing: 0; }
+.pv-card--draft .media, .pv-card--draft .textpost { outline: 2px dashed var(--ember, #ff8a4c); outline-offset: 3px; }
+.pv-card--approved .media, .pv-card--approved .textpost { outline: 2px solid var(--clover, #9bd46a); outline-offset: 3px; }
+.pv .react { pointer-events: none; opacity: .55; }
+.pv-prompt__text { white-space: pre-wrap; margin: 8px 0 0; }

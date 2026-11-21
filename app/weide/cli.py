@@ -1,11 +1,13 @@
 """Command line: `uv run weide <command>`.
 
-Commands: migrate, import-public, import-legacy-db, seed-characters, serve, export-static, pull-approved,
-deploy.
+Commands: migrate, import-public, import-legacy-db, seed-characters, serve (--preview), preview-key,
+preview-login-link,
+export-static, pull-approved, deploy.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -84,10 +86,33 @@ def cmd_seed_characters(a: argparse.Namespace) -> None:
 
 
 def cmd_serve(a: argparse.Namespace) -> None:
+    if a.preview:
+        return cmd_serve_preview(a)
     import uvicorn
 
     from .server import create_app
-    uvicorn.run(create_app(a.db), host=a.host, port=a.port, log_level="info")
+    uvicorn.run(create_app(a.db), host=a.host or "127.0.0.1", port=a.port or config.DEFAULT_PORT, log_level="info")
+
+
+def cmd_serve_preview(a: argparse.Namespace) -> None:
+    from .preview import DEFAULT_PORT, PreviewConfigError, parse_hosts, serve
+    from .preview_auth import PreviewKeyError
+    try:
+        hosts = parse_hosts(a.host or config.env("PREVIEW_HOSTS") or "127.0.0.1")
+        port = a.port or int(config.env("PREVIEW_PORT") or DEFAULT_PORT)
+        serve(a.db, hosts, port)
+    except (PreviewConfigError, PreviewKeyError, FileNotFoundError, ValueError, OSError) as e:
+        _die(str(e))
+
+
+def cmd_preview_key(a: argparse.Namespace) -> None:
+    from .preview_auth import PreviewKeyError, create_key
+    try:
+        path = create_key(Path(a.path) if a.path else None, rotate=a.rotate)
+    except PreviewKeyError as e:
+        _die(str(e))
+    # the token itself is never printed
+    print(json.dumps({"key_file": str(path), "rotated": bool(a.rotate)}))
 
 
 def cmd_export_static(a: argparse.Namespace) -> None:
@@ -130,6 +155,32 @@ def cmd_deploy(a: argparse.Namespace) -> None:
         _die("; ".join(res["errors"][:10]), code=1)
 
 
+def cmd_preview_login_link(a: argparse.Namespace) -> None:
+    import ipaddress
+
+    from .preview import DEFAULT_PORT, PreviewConfigError, is_loopback, parse_hosts
+    from .preview_login import LinkStore, read_env_file
+    from .preview_auth import key_file
+    envfile = read_env_file(Path(a.env_file).expanduser() if a.env_file else key_file().parent / "preview.env")
+
+    def setting(name: str) -> str | None:
+        return config.env(name) or envfile.get(config.ENV_PREFIX + name)
+    host = a.host
+    if not host:
+        try:
+            hosts = parse_hosts(setting("PREVIEW_HOSTS"))
+        except PreviewConfigError as e:
+            _die(str(e))
+        host = next((h for h in hosts if not is_loopback(h)), hosts[0])
+    port = a.port or int(setting("PREVIEW_PORT") or DEFAULT_PORT)
+    with contextlib.suppress(ValueError):
+        if ipaddress.ip_address(host).version == 6:
+            host = f"[{host}]"
+    nonce = LinkStore().create()
+    print(f"http://{host}:{port}/login#link={nonce}")
+    print("one-time link, valid for 10 minutes", file=sys.stderr)
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="weide", description=f"{config.APP_NAME}: {config.APP_TAGLINE}")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -156,10 +207,27 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_seed_characters)
 
     s = sub.add_parser("serve", help=f"run the web app (default port {config.DEFAULT_PORT})")
-    s.add_argument("--host", default="127.0.0.1")
-    s.add_argument("--port", type=int, default=config.DEFAULT_PORT)
+    s.add_argument("--host", default=None, help="address (default 127.0.0.1); with --preview a comma separated list "
+                   "(default: $HENHOUSE_PREVIEW_HOSTS), never 0.0.0.0")
+    s.add_argument("--port", type=int, default=None, help=f"default {config.DEFAULT_PORT}; with --preview "
+                   "$HENHOUSE_PREVIEW_PORT or 18510")
+    s.add_argument("--preview", action="store_true", help="private read-only preview with drafts from the "
+                   "generation service; login required (see docs/PREVIEW.md)")
     _db_arg(s)
     s.set_defaults(fn=cmd_serve)
+
+    s = sub.add_parser("preview-key", help="create the preview login key file (never printed)")
+    s.add_argument("--rotate", action="store_true", help="replace an existing key (logs out every browser)")
+    s.add_argument("--path", default=None, help="key file (default: $HENHOUSE_PREVIEW_KEY_FILE or "
+                   "~/.config/henhouse/preview.key)")
+    s.set_defaults(fn=cmd_preview_key)
+
+    s = sub.add_parser("preview-login-link", help="print a one-time login URL for the preview (10 min, single use)")
+    s.add_argument("--host", default=None, help="host in the URL (default: first non-loopback preview host)")
+    s.add_argument("--port", type=int, default=None, help="port in the URL (default: preview port)")
+    s.add_argument("--env-file", default=None,
+                   help="(default: preview.env next to the key file) EnvironmentFile to read the preview hosts/port from when not set in the environment")
+    s.set_defaults(fn=cmd_preview_login_link)
 
     s = sub.add_parser("export-static", help="write a static snapshot (published posts only) for a plain file host")
     s.add_argument("outdir")
