@@ -5,7 +5,9 @@ The service's publish API is not final yet, so everything that knows its shape l
 
   GET {base}/api/v1/publish/approved
       -> {"items": [{public_id, run_id, character_slug, caption, title?, approved_at,
-                     media_url, poster_url?, summary_url, sha256?}]}
+                     media_url, poster_url?, summary_url, sha256?, status?}],
+          "revoked": [{public_id, revoked_at}]}
+      An item with status "revoked" counts like an entry in `revoked`.
   GET summary_url  -> public generation summary JSON (sanitized by the service; we sanitize again)
   GET media_url    -> the final video (streamed to disk; Content-Length and sha256 verified when given)
 
@@ -18,8 +20,13 @@ through `_redact`. Settings come from the environment or from a gitignored `.env
 Each item becomes one post (kind reel, status published: approval happened in the service) matched by
 source `generation:<run_id>`, so a rerun never duplicates; caption/title/summary changes update it.
 The character account must already exist. Media go to <media root>/gen/<public_id>.mp4, a 540 px
-poster to <thumb root>/540/gen/<public_id>.jpg (ffmpeg; skipped without it). Every item is fetched into
-a temp dir first and written in one DB transaction; a failed item leaves no post and no file behind.
+poster to <thumb root>/540/gen/<public_id>.jpg: the service poster (scaled with ffmpeg, or kept as is
+when it is a JPEG and ffmpeg is missing), else a frame of the video (ffmpeg; skipped without it).
+Every item is validated on its own, fetched into a temp dir and written in one DB transaction; a failed
+item leaves no post and no file behind and does not stop the others.
+
+Revoked public_ids are unpublished: the post goes back to status draft (meta `revoked_at` notes why), so
+it vanishes from the API and the export; the media file stays on disk. Unknown ids are a no-op.
 """
 from __future__ import annotations
 
@@ -37,7 +44,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from . import config
-from .db import jdump, jload, parse_time, upsert_post
+from .db import jdump, jload, now_iso, parse_time, upsert_post
 from .generation import PUBLIC_ID, REDACTED, sanitize
 
 APPROVED_PATH = "/api/v1/publish/approved"
@@ -167,12 +174,16 @@ class ServiceClient:
         except ValueError:
             raise PublishError(f"{what}: not JSON") from None
 
-    def approved(self) -> list[ApprovedItem]:
+    def approved(self) -> tuple[list[Any], list[Any]]:
+        """(raw items, raw revocations); items are validated one by one by the caller."""
         data = self.get_json(APPROVED_PATH, "approved list")
         items = data.get("items") if isinstance(data, dict) else None
         if not isinstance(items, list):
             raise PublishError("approved list: no items array")
-        return [ApprovedItem.parse(d) for d in items]
+        revoked = data.get("revoked") or []
+        if not isinstance(revoked, list):
+            raise PublishError("approved list: revoked is not an array")
+        return items, revoked
 
     def summary(self, item: ApprovedItem) -> dict:
         s = self.get_json(item.summary_url, f"{item.public_id}: summary")
@@ -260,6 +271,11 @@ def _is_mp4(path: Path) -> bool:
     return len(head) >= 8 and head[4:8] == b"ftyp"
 
 
+def _is_jpeg(path: Path) -> bool:
+    with path.open("rb") as f:
+        return f.read(3) == b"\xff\xd8\xff"
+
+
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
@@ -344,15 +360,18 @@ def _publish_item(con: sqlite3.Connection, client: ServiceClient, item: Approved
         new_poster = None
         if new_media is not None or not poster_dest.is_file():
             cand = Path(ptmp) / "poster.jpg"
-            if item.poster_url and ffmpeg_available():
+            ok = False
+            if item.poster_url:                    # the service poster first, a video frame as fallback
                 raw = Path(tmp) / "poster.src"
                 try:
                     client.download(item.poster_url, raw, f"{item.public_id}: poster")
-                    ok = make_poster(raw, cand, from_video=False)
+                    if ffmpeg_available():
+                        ok = make_poster(raw, cand, from_video=False)
+                    elif _is_jpeg(raw):
+                        os.replace(raw, cand)
+                        ok = True
                 except PublishError:
                     ok = False
-            else:
-                ok = False
             if not ok:
                 ok = make_poster(new_media or media_dest, cand, from_video=True)
             new_poster = cand if ok else None
@@ -381,41 +400,102 @@ def _publish_item(con: sqlite3.Connection, client: ServiceClient, item: Approved
     return status, new_poster is not None
 
 
+def _revoke(con: sqlite3.Connection, public_id: str, revoked_at: str | None, *, dry_run: bool) -> str:
+    """revoked | unchanged (already unpublished) | unknown."""
+    row = con.execute("SELECT id, status, meta_json FROM posts WHERE public_id=? AND source LIKE 'generation:%'",
+                      (public_id,)).fetchone()
+    if row is None:
+        return "unknown"
+    if row["status"] != "published":
+        return "unchanged"
+    if not dry_run:
+        meta = jload(row["meta_json"], {}) or {}
+        meta["revoked_at"] = revoked_at or now_iso()
+        con.execute("UPDATE posts SET status='draft', meta_json=?, updated_at=? WHERE id=?",
+                    (jdump(meta), now_iso(), row["id"]))
+        con.commit()
+    return "revoked"
+
+
+def _revocations(raw_items: list[Any], raw_revoked: list[Any], failed: list[str]) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for src, entries in (("revoked", raw_revoked), ("items", [d for d in raw_items
+                                                               if isinstance(d, dict) and d.get("status") == "revoked"])):
+        for d in entries:
+            pid = d.get("public_id") if isinstance(d, dict) else None
+            if not isinstance(pid, str) or not PUBLIC_ID.match(pid):
+                failed.append(f"{src}: revocation without a valid public_id")
+                continue
+            out.setdefault(pid, str(d["revoked_at"]) if d.get("revoked_at") else None)
+    return out
+
+
 def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run: bool = False,
                   transport: httpx.BaseTransport | None = None, media_root: Path | None = None,
                   thumb_root: Path | None = None, log: Callable[[str], None] = lambda s: None) -> dict:
-    """Publish every approved item. Returns {new, updated, unchanged, failed: [...], items: [...]}.
+    """Publish every approved item and unpublish every revoked one.
+    Returns {new, updated, unchanged, revoked, failed: [...], notes: [...], items: [...]}.
     Items are independent: one failure does not block the others (but makes `failed` non-empty)."""
     media_root = Path(media_root or config.MEDIA_ROOT)
     thumb_root = Path(thumb_root or config.THUMB_ROOT)
     client = ServiceClient(settings, transport)
-    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "failed": [], "items": [], "dry_run": dry_run}
+    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "failed": [], "notes": [],
+                           "items": [], "dry_run": dry_run}
+
+    def fail(msg: str, *secrets: str) -> None:
+        msg = _redact(msg, settings.key, *secrets)
+        res["failed"].append(msg)
+        log(f"failed {msg}")
+
     try:
         try:
-            items = client.approved()
+            raw_items, raw_revoked = client.approved()
         except PublishError as e:
-            res["failed"].append(_redact(str(e), settings.key))
+            fail(str(e))
             return res
+        revoked = _revocations(raw_items, raw_revoked, res["failed"])
         seen: set[str] = set()
-        for item in items:
+        for n, d in enumerate(raw_items):
+            if isinstance(d, dict) and d.get("status") == "revoked":
+                continue
+            try:
+                if isinstance(d, dict) and d.get("status") not in (None, "approved"):
+                    raise PublishError(f"item #{n}: unknown status {str(d['status'])[:40]!r}")
+                item = ApprovedItem.parse(d)
+            except PublishError as e:
+                rid = d.get("run_id") if isinstance(d, dict) and isinstance(d.get("run_id"), str) else ""
+                fail(f"item #{n}: {e}" if not str(e).startswith("item #") else str(e), *([rid] if len(rid) >= 4 else []))
+                continue
             if item.public_id in seen:
-                res["failed"].append(f"{item.public_id}: listed twice")
+                fail(f"{item.public_id}: listed twice")
                 continue
             seen.add(item.public_id)
+            if item.public_id in revoked:
+                continue                                   # revoked wins over a stale approval
             try:
                 status, poster = _publish_item(con, client, item, dry_run=dry_run, media_root=media_root,
                                                thumb_root=thumb_root)
             except (PublishError, ValueError, OSError, sqlite3.Error) as e:
                 con.rollback()
-                msg = _redact(f"{item.public_id}: {e}" if not str(e).startswith(item.public_id) else str(e),
-                              settings.key, item.run_id)
-                res["failed"].append(msg)
-                log(f"failed {msg}")
+                fail(f"{item.public_id}: {e}" if not str(e).startswith(item.public_id) else str(e), item.run_id)
                 continue
             res[status] += 1
             res["items"].append({"public_id": item.public_id, "status": status,
                                  **({"poster": poster} if status != "unchanged" and not dry_run else {})})
             log(f"{status} {item.public_id}")
+        for pid, at in revoked.items():
+            try:
+                r = _revoke(con, pid, at, dry_run=dry_run)
+            except sqlite3.Error as e:
+                con.rollback()
+                fail(f"{pid}: revoke: {e}")
+                continue
+            if r == "unknown":
+                res["notes"].append(f"{pid}: revoked, but no such post (nothing to do)")
+            elif r == "revoked":
+                res["revoked"] += 1
+                res["items"].append({"public_id": pid, "status": "revoked"})
+                log(f"revoked {pid}")
     finally:
         client.close()
     return res

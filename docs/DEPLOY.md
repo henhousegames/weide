@@ -23,8 +23,14 @@ uv run weide pull-approved             # publish
 Generations are approved in the service's Lab UI; `pull-approved` turns each approved item into a
 published post of an existing character account (it never creates accounts; run `seed-characters`
 first). Reruns are idempotent: an unchanged item is skipped, a changed caption, title or summary
-updates the post. Media land in `media/gen/<public_id>.mp4`, posters (ffmpeg, optional) in
-`thumb/540/gen/<public_id>.jpg`. The generation summary is sanitized again before it is stored, and
+updates the post. Media land in `media/gen/<public_id>.mp4`, posters in
+`thumb/540/gen/<public_id>.jpg` (the service poster, scaled with ffmpeg; without a service poster a
+video frame via ffmpeg; without ffmpeg only a JPEG service poster is kept as is).
+
+Revocations (a top-level `revoked` list or items with `status: "revoked"`) unpublish the post with that
+public_id: it goes back to draft and disappears from the API and the next export (the media file stays
+on disk, but the export removes it from the site). Unknown ids are reported as notes. A malformed item
+only fails itself; the others are still processed. The generation summary is sanitized again before it is stored, and
 the internal run id stays out of every public file. A failing item leaves no post and no file behind;
 the command then exits non-zero.
 
@@ -40,8 +46,9 @@ uv run weide deploy --skip-pull
 
 The command prints JSON. `"changed": false` means `site/` is byte-identical to before, so automation
 can skip the commit. `errors` (pull failures, leak check hits) make it exit non-zero; then do not
-commit `site/`. Nothing is committed or pushed by the command. Note that the exported "today"
-(ranking pages) follows the local date unless `--today` is given, so a new day is a real change.
+commit `site/`. Nothing is committed or pushed by the command. The exported "today" (ranking pages)
+is the date of the newest published post unless `--today` is given, so the same data exports to the
+same files on any day.
 
 Then review and commit `site/` and push to `main`.
 

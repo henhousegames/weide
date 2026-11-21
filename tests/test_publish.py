@@ -37,6 +37,8 @@ class FakeService:
         self.summary = dict(SUMMARY)
         self.media = MP4
         self.media_status = 200
+        self.revoked: list = []
+        self.poster: bytes | None = None
         self.calls: list[str] = []
         self.auth: dict[str, str | None] = {}
 
@@ -47,7 +49,11 @@ class FakeService:
         if req.url.host == "svc.example.test" and req.headers.get("authorization") != f"Bearer {KEY}":
             return httpx.Response(401, json={"error": {"code": "unauthorized", "message": "bad key"}})
         if path == "/api/v1/publish/approved":
-            return httpx.Response(200, json={"items": self.items})
+            return httpx.Response(200, json={"items": self.items, "revoked": self.revoked})
+        if path.startswith("/api/v1/publish/poster/"):
+            if self.poster is None:
+                return httpx.Response(404)
+            return httpx.Response(200, content=self.poster, headers={"content-type": "image/jpeg"})
         if path.startswith("/api/v1/publish/summary/"):
             return httpx.Response(200, json=self.summary)
         if path.startswith("/api/v1/publish/media/") or req.url.host == "cdn.example.test":
@@ -275,3 +281,91 @@ def test_no_ffmpeg_skips_poster(env, monkeypatch):
     monkeypatch.setattr(pub, "ffmpeg_available", lambda: False)
     res = run(con, svc)
     assert res["new"] == 1 and res["items"][0]["poster"] is False and not (thumb / "540/gen/gpub01.jpg").exists()
+
+
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 100        # magic only
+
+
+def test_service_poster_used_without_ffmpeg(env, monkeypatch):
+    import weide.publish as pub
+    con, svc, _, thumb, _ = env
+    monkeypatch.setattr(pub, "ffmpeg_available", lambda: False)
+    svc.items[0]["poster_url"] = "/api/v1/publish/poster/gpub01"
+    svc.poster = JPEG
+    res = run(con, svc)
+    assert res["items"][0]["poster"] is True and (thumb / "540/gen/gpub01.jpg").read_bytes() == JPEG
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
+def test_service_poster_preferred_then_video_fallback(env, tmp_path):
+    import subprocess
+    con, svc, _, thumb, _ = env
+    vid, img = tmp_path / "v.mp4", tmp_path / "p.jpg"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=green:s=96x160:d=1", "-pix_fmt", "yuv420p",
+                    str(vid)], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=1080x1920", "-frames:v", "1",
+                    str(img)], check=True)
+    svc.media, svc.poster = vid.read_bytes(), img.read_bytes()
+    svc.items[0]["poster_url"] = "/api/v1/publish/poster/gpub01"
+    assert run(con, svc)["items"][0]["poster"] is True
+    assert "/api/v1/publish/poster/gpub01" in svc.calls
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width",
+                          "-of", "csv=p=0", str(thumb / "540/gen/gpub01.jpg")], capture_output=True, text=True)
+    assert out.stdout.strip() == "540"                  # scaled from the service poster (the video is 96 px)
+    # poster missing at the service -> frame of the video
+    (thumb / "540/gen/gpub01.jpg").unlink()
+    svc.poster = None
+    svc.items[0]["caption"] = "neu"
+    assert run(con, svc)["items"][0]["poster"] is True and (thumb / "540/gen/gpub01.jpg").is_file()
+
+
+def test_malformed_item_fails_alone(env):
+    con, svc, *_ = env
+    good = svc.items[0]
+    svc.items = ["junk", {"public_id": "bad id!", "run_id": "run-x"}, {"public_id": "gpub09"},
+                 {**good, "public_id": "gpub05", "status": "weird"}, good]
+    res = run(con, svc)
+    assert res["new"] == 1 and len(res["failed"]) == 4 and [p["public_id"] for p in posts(con)] == ["gpub01"]
+
+
+def test_revocations(env, tmp_path):
+    con, svc, media, _, dbp = env
+    from fastapi.testclient import TestClient
+    from weide.server import create_app
+    second = {**svc.items[0], "public_id": "gpub02", "run_id": "run-EXAMPLE-2"}
+    svc.items.append(second)
+    assert run(con, svc)["new"] == 2
+    site = tmp_path / "site"
+    exp = export_static(site, dbp)
+    assert (site / "data/gen/gpub01.json").is_file() and (site / "media/gen/gpub01.mp4").is_file()
+
+    svc.revoked = [{"public_id": "gpub01", "revoked_at": "2026-11-18T09:00:00+01:00"},
+                   {"public_id": "gnothere", "revoked_at": "2026-11-18T09:00:00+01:00"}]
+    svc.items[1] = {**second, "status": "revoked"}
+    dry = run(con, svc, dry_run=True)
+    assert dry["revoked"] == 2 and all(p["status"] == "published" for p in posts(con))
+    res = run(con, svc)
+    assert (res["revoked"], res["new"], res["failed"]) == (2, 0, [])
+    assert any("gnothere" in n for n in res["notes"])
+    assert {p["status"] for p in posts(con)} == {"draft"}
+    assert (media / "gen/gpub01.mp4").is_file()                     # kept on disk
+    again = run(con, svc)
+    assert again["revoked"] == 0 and again["failed"] == []          # idempotent
+
+    client = TestClient(create_app(dbp))
+    assert client.get("/api/generations/gpub01").status_code == 404
+    assert "gpub01" not in client.get("/api/feed").text
+    exp = export_static(site, dbp)
+    assert exp["leaks"] == [] and exp["pruned"] >= 2
+    assert not (site / "data/gen/gpub01.json").exists() and not (site / "media/gen/gpub01.mp4").exists()
+    assert "gpub0" not in (site / "data/feed.json").read_text()
+
+
+def test_export_today_defaults_to_newest_post(env, tmp_path, monkeypatch):
+    con, svc, _, _, dbp = env
+    run(con, svc)
+    monkeypatch.setattr(config, "TODAY_OVERRIDE", None)
+    res = export_static(tmp_path / "a", dbp)
+    assert res["today"] == "2026-11-17"                              # approved_at of the only post
+    assert export_static(tmp_path / "b", dbp, today="2026-11-20")["today"] == "2026-11-20"
+    assert config.TODAY_OVERRIDE is None
