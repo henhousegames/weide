@@ -4,10 +4,15 @@ not deployed yet, and drafts waiting for review in the generation service.
 Three kinds of cards, one feed:
   1. published posts of henhouse.db, exactly as the public site shows them (no marker);
   2. approved, not yet deployed: a generation with an active `publication` whose public_id is not a
-     published post in henhouse.db -> marker "FREIGEGEBEN – noch nicht live";
-  3. drafts: generations with status ready_for_review and no active publication -> marker "ENTWURF",
-     linking to the Lab run page on the same host the browser used (port 18500).
-Failed / cancelled generations are never shown.
+     published post in henhouse.db -> marker "FREIGEGEBEN – noch nicht live" (already published: not
+     shown again, the post is);
+  3. drafts: generations with status ready_for_review and no active publication (none, or revoked)
+     -> marker "ENTWURF". A revoked publication on any other status is hidden.
+Every generation card links to the Lab run page (lab_path) on the same host the browser used (port 18500).
+The service lists only ready_for_review / published generations; any other status is ignored.
+
+Polling: every 60 s only what finished after the cursor; every 10 min the full list is re-read, because a
+later approval or revocation of an item already seen does not come back through the cursor.
 
 Safety: henhouse.db is opened read-only (SQLite mode=ro) and never migrated; every non-GET request is
 refused; nothing here imports or runs export, deploy or publish code; the publish key
@@ -28,6 +33,7 @@ import logging
 import os
 import socket
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
@@ -43,7 +49,7 @@ from . import config
 from .db import parse_time
 from .preview_auth import install_auth, load_key
 from .preview_login import LinkStore, OwnerAutoLogin, owner_logins
-from .review import DRAFT_STATUS, GEN_ID, SLUG, ReviewClient, ReviewError, ReviewItem, ReviewSettings
+from .review import DRAFT_STATUS, GEN_ID, LAB_PATH, SLUG, ReviewClient, ReviewError, ReviewItem, ReviewSettings
 from .server import POST_SQL, PUBLISHED, account_brief, create_app, feed_page, _csv
 
 log = logging.getLogger("weide.preview")
@@ -51,7 +57,7 @@ log = logging.getLogger("weide.preview")
 DEFAULT_PORT = 18510
 LAB_PORT = 18500
 POLL_SECONDS = 60
-FULL_SYNC_EVERY = 30              # polls; a full refresh drops items the cursor cannot report as gone
+FULL_RELOAD_SECONDS = 600         # full re-read: picks up later approvals/revocations and drops items gone
 PREVIEW_STATIC = Path(__file__).resolve().parent / "preview_static"
 ID_PREFIX = "vs-"
 STUDIO = {"slug": "studio-entwurf", "handle": "@studio.entwurf", "display_name": "Studio (Entwurf)",
@@ -171,8 +177,10 @@ def load_review_settings() -> ReviewSettings | None:
 class ReviewStore:
     """In-memory copy of the reviewable generations, refreshed by polling (never written to disk)."""
 
-    def __init__(self, client: ReviewClient | None):
+    def __init__(self, client: ReviewClient | None, clock: Callable[[], float] = time.monotonic):
         self.client = client
+        self.clock = clock
+        self.last_full: float | None = None      # clock() of the last successful full reload
         self.items: dict[str, ReviewItem] = {}
         self.cursor: str | None = None
         self.polls = 0
@@ -206,7 +214,8 @@ class ReviewStore:
     async def poll_once(self) -> None:
         if self.client is None:
             return
-        full = self.cursor is None or self.polls % FULL_SYNC_EVERY == 0
+        now = self.clock()
+        full = self.cursor is None or self.last_full is None or now - self.last_full >= FULL_RELOAD_SECONDS
         try:
             raw, cursor = await self.client.generations(None if full else self.cursor)
         except ReviewError as e:
@@ -228,6 +237,8 @@ class ReviewStore:
         self.items = fresh
         self.cursor = cursor
         self.polls += 1
+        if full:
+            self.last_full = now
         if self.failures:
             log.warning("review API reachable again")
         self.failures, self.auth_failed = 0, False
@@ -256,7 +267,7 @@ class ReviewStore:
 
 # --- cards -------------------------------------------------------------------------------------------
 
-def lab_url(request: Request, gid: str) -> str | None:
+def lab_url(request: Request, gid: str, lab_path: str | None = None) -> str | None:
     host = request.url.hostname or ""
     try:
         ip = ipaddress.ip_address(host)
@@ -264,7 +275,8 @@ def lab_url(request: Request, gid: str) -> str | None:
     except ValueError:
         if not host or not all(c.isalnum() or c in ".-" for c in host):
             return None
-    return f"http://{host}:{LAB_PORT}/#/g/{quote(gid, safe='')}"
+    path = lab_path if lab_path and LAB_PATH.match(lab_path) else f"/#/g/{quote(gid, safe='')}"
+    return f"http://{host}:{LAB_PORT}{path}"
 
 
 def _when(it: ReviewItem, approved: bool) -> str:
@@ -276,7 +288,8 @@ def _when(it: ReviewItem, approved: bool) -> str:
 
 
 def classify(it: ReviewItem, published_ids: set[str]) -> str | None:
-    """approved | draft | None (not shown: hidden status, already published, or not reviewable)."""
+    """approved | draft | None (not shown: unlisted status, already a published post, or revoked and not
+    ready_for_review)."""
     if not it.visible:
         return None
     pub = it.publication
@@ -306,7 +319,7 @@ def preview_card(it: ReviewItem, state: str, accounts: dict[str, dict], request:
         "reactions": {t: 0 for t in config.REACTION_TYPES}, "comment_count": 0, "moment_count": 0, "score": 0,
         "account": account, "generation": None,
         "preview": {"state": state, "label": MARK_APPROVED if state == "approved" else MARK_DRAFT,
-                    "lab_url": lab_url(request, it.id), "model": model, "task": it.task, "prompt": it.prompt},
+                    "lab_url": lab_url(request, it.id, it.lab_path), "model": model, "task": it.task, "prompt": it.prompt},
     }
 
 
