@@ -1,0 +1,170 @@
+{
+ "_note": "Review items around `credits` (video-service 2026-11-21): the live review API sent no credits yet and one audio-only item (task audio, audio/wav, no poster); this fixture covers credits present, absent, null, and an audio-only item with credits. Built from the live shapes in review_generations.json.",
+ "items": [
+  {
+   "id": "gen_credits0000000000001",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T16:59:35.625+00:00",
+   "finished_at": "2026-11-21T22:10:00.000+00:00",
+   "task": "i2v",
+   "model": {
+    "id": "ltx-2.5-distilled",
+    "display_name": "LTX-2.5 22B distilled (I2V + joint audio)"
+   },
+   "generated_with": "LTX-2.5",
+   "labels": {
+    "test": "ltx-a",
+    "approval": "owner 2026-11-21: okay, lets start our tests"
+   },
+   "start_source": null,
+   "prompt_original": "The chestnut-brown hen behind the farmhouse kitchen counter looks straight into the lens and says immediately at the start, in a cheerful, slightly smug German voice: \"Leute, heute gibt's Rührei!\" While she speaks she gives one big whole-head nod toward the bowl of eggs, then looks back into the lens. One continuous shot: she stays in the same spot behind the counter the whole clip, wings folded, no hands visible, no other person or animal appears, only the hen speaks. Audio: her voice and a quiet kitchen room tone, no music. Static locked-off shot, the camera does not move, no zoom, no push-in.",
+   "output": {
+    "mime": "video/mp4",
+    "width": 768,
+    "height": 1344,
+    "fps": 24.0,
+    "duration_s": 5.042,
+    "has_audio": true,
+    "sha256": "36f3ed7dc3ef61d1065e8244b22ebcdc1dfd8c0658ef1f965236bfd5ac74d555"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_credits0000000000001/media/output",
+    "poster": "/api/v1/review/generations/gen_credits0000000000001/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_credits0000000000001",
+   "credits": [
+    {
+     "kind": "license_notice",
+     "text": "Powered by Stability AI",
+     "model": "Stable Audio 3 Small SFX",
+     "license": {
+      "id": "Stability-AI-Community-2024-07-05",
+      "url": "https://stability.ai/community-license-agreement"
+     }
+    },
+    {
+     "kind": "audio_source",
+     "text": "Sound: \"Hen clucking\" (Freesound, CC0 1.0)",
+     "model": null,
+     "license": {
+      "id": "CC0-1.0",
+      "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+     }
+    }
+   ]
+  },
+  {
+   "id": "gen_nocredits00000000001",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T16:59:35.625+00:00",
+   "finished_at": "2026-11-21T22:11:00.000+00:00",
+   "task": "i2v",
+   "model": {
+    "id": "ltx-2.5-distilled",
+    "display_name": "LTX-2.5 22B distilled (I2V + joint audio)"
+   },
+   "generated_with": "LTX-2.5",
+   "labels": {
+    "test": "ltx-a",
+    "approval": "owner 2026-11-21: okay, lets start our tests"
+   },
+   "start_source": null,
+   "prompt_original": "The chestnut-brown hen behind the farmhouse kitchen counter looks straight into the lens and says immediately at the start, in a cheerful, slightly smug German voice: \"Leute, heute gibt's Rührei!\" While she speaks she gives one big whole-head nod toward the bowl of eggs, then looks back into the lens. One continuous shot: she stays in the same spot behind the counter the whole clip, wings folded, no hands visible, no other person or animal appears, only the hen speaks. Audio: her voice and a quiet kitchen room tone, no music. Static locked-off shot, the camera does not move, no zoom, no push-in.",
+   "output": {
+    "mime": "video/mp4",
+    "width": 768,
+    "height": 1344,
+    "fps": 24.0,
+    "duration_s": 5.042,
+    "has_audio": true,
+    "sha256": "36f3ed7dc3ef61d1065e8244b22ebcdc1dfd8c0658ef1f965236bfd5ac74d555"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_nocredits00000000001/media/output",
+    "poster": "/api/v1/review/generations/gen_nocredits00000000001/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_nocredits00000000001"
+  },
+  {
+   "id": "gen_nullcredits0000000001",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T16:59:35.625+00:00",
+   "finished_at": "2026-11-21T22:12:00.000+00:00",
+   "task": "i2v",
+   "model": {
+    "id": "ltx-2.5-distilled",
+    "display_name": "LTX-2.5 22B distilled (I2V + joint audio)"
+   },
+   "generated_with": "LTX-2.5",
+   "labels": {
+    "test": "ltx-a",
+    "approval": "owner 2026-11-21: okay, lets start our tests"
+   },
+   "start_source": null,
+   "prompt_original": "The chestnut-brown hen behind the farmhouse kitchen counter looks straight into the lens and says immediately at the start, in a cheerful, slightly smug German voice: \"Leute, heute gibt's Rührei!\" While she speaks she gives one big whole-head nod toward the bowl of eggs, then looks back into the lens. One continuous shot: she stays in the same spot behind the counter the whole clip, wings folded, no hands visible, no other person or animal appears, only the hen speaks. Audio: her voice and a quiet kitchen room tone, no music. Static locked-off shot, the camera does not move, no zoom, no push-in.",
+   "output": {
+    "mime": "video/mp4",
+    "width": 768,
+    "height": 1344,
+    "fps": 24.0,
+    "duration_s": 5.042,
+    "has_audio": true,
+    "sha256": "36f3ed7dc3ef61d1065e8244b22ebcdc1dfd8c0658ef1f965236bfd5ac74d555"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_nullcredits0000000001/media/output",
+    "poster": "/api/v1/review/generations/gen_nullcredits0000000001/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_nullcredits0000000001",
+   "credits": null
+  },
+  {
+   "id": "gen_audio000000000000001",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T21:17:45.633+00:00",
+   "finished_at": "2026-11-21T22:13:00.000+00:00",
+   "task": "audio",
+   "model": {
+    "id": "stable-audio-3-small-sfx",
+    "display_name": "Stable Audio 3 Small SFX"
+   },
+   "generated_with": "Stable Audio 3 Small SFX",
+   "labels": {
+    "purpose": "smoke"
+   },
+   "start_source": null,
+   "prompt_original": "hen clucking, close mic",
+   "output": {
+    "mime": "audio/wav",
+    "width": null,
+    "height": null,
+    "fps": null,
+    "duration_s": 5.0,
+    "has_audio": true,
+    "sha256": "cacacaca00000000000000000000000000000000000000000000000000000000"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_audio000000000000001/media/output"
+   },
+   "license_block": null,
+   "publication": null,
+   "lab_path": "/#/g/gen_audio000000000000001",
+   "credits": [
+    {
+     "kind": "license_notice",
+     "text": "Powered by Stability AI",
+     "model": "Stable Audio 3 Small SFX",
+     "license": {
+      "id": "Stability-AI-Community-2024-07-05",
+      "url": "https://stability.ai/community-license-agreement"
+     }
+    }
+   ]
+  }
+ ],
+ "next_since": "2026-11-21T22:13:00.000+00:00",
+ "has_more": false
+}

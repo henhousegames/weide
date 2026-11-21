@@ -541,7 +541,8 @@ def test_start_source_summary_top_level_reaches_card_and_gen(env, tmp_path):
     rec = _record(con)
     assert rec["start_source_sim"] is True and rec["start_source"] == "isaac-sim"   # the sanitizer keeps the value
     card_gen, gen = _export_gen(env, tmp_path)
-    assert card_gen == {"public_id": PID, "model_label": "Compose", "start_source_sim": True}   # card: boolean only
+    assert card_gen == {"public_id": PID, "model_label": "Compose", "start_source_sim": True,   # card: boolean only
+                        "credits": []}                                     # (+ the always-present credits list)
     assert gen["start_source_sim"] is True and gen["start_source"] == "isaac-sim"
 
 

@@ -50,9 +50,20 @@ def test_model_short_label(model, label):
     assert model_short_label(model) == label
 
 
+def _drop_license_urls(obj):
+    """The public licence URL of a credit (credits[].license.url) is the one URL a fixture may carry."""
+    if isinstance(obj, dict):
+        return {k: ([{**c, "license": {**c["license"], "url": None}} if isinstance(c, dict)
+                     and isinstance(c.get("license"), dict) else c for c in v] if k == "credits" and isinstance(v, list)
+                    else _drop_license_urls(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_drop_license_urls(x) for x in obj]
+    return obj
+
+
 def test_fixtures_are_sanitized():
     for f in FIXTURES.glob("*.json"):
-        text = f.read_text(encoding="utf-8")
+        text = json.dumps(_drop_license_urls(json.loads(f.read_text(encoding="utf-8"))), ensure_ascii=False)
         for bad in ("http://", "https://", "/home/", "/Users/", "vsk_", "Bearer"):
             assert bad not in text, (f.name, bad)
 

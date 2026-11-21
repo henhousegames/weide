@@ -1,0 +1,82 @@
+{
+ "_note": "GET /api/v1/publications/{public_id}/summary for the items of publications_credits.json (same credits as the list items).",
+ "pub_CREDITS01": {
+  "summary_version": 1,
+  "public_id": "pub_CREDITS01",
+  "character": "maehbot",
+  "caption": "Credits-Test 01",
+  "approved_at": "2026-11-21T22:00:00.000+00:00",
+  "model": {
+   "id": "compose",
+   "display_name": "Compose (ffmpeg edit of finished generations)"
+  },
+  "generated_with": "LTX-2.5, geschnitten",
+  "start_source": null,
+  "task": "compose",
+  "seed": null,
+  "prompt": {
+   "original": "A robot sheep listens to a hen",
+   "effective": "",
+   "negative": ""
+  },
+  "composition": {
+   "segments": [],
+   "audio": [],
+   "credits": []
+  },
+  "credits": [
+   {
+    "kind": "license_notice",
+    "text": "Powered by Stability AI",
+    "model": "Stable Audio 3 Small SFX",
+    "license": {
+     "id": "Stability-AI-Community-2024-07-05",
+     "url": "https://stability.ai/community-license-agreement"
+    }
+   },
+   {
+    "kind": "audio_source",
+    "text": "Sound: \"Hen clucking\" (Freesound, CC0 1.0)",
+    "model": null,
+    "license": {
+     "id": "CC0-1.0",
+     "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+    }
+   }
+  ],
+  "media": [],
+  "links": {
+   "summary": "/api/v1/publications/pub_CREDITS01/summary"
+  }
+ },
+ "pub_NOCREDIT1": {
+  "summary_version": 1,
+  "public_id": "pub_NOCREDIT1",
+  "character": "maehbot",
+  "caption": "Credits-Test T1",
+  "approved_at": "2026-11-21T22:00:00.000+00:00",
+  "model": {
+   "id": "compose",
+   "display_name": "Compose (ffmpeg edit of finished generations)"
+  },
+  "generated_with": "LTX-2.5, geschnitten",
+  "start_source": null,
+  "task": "i2v",
+  "seed": null,
+  "prompt": {
+   "original": "A robot sheep listens to a hen",
+   "effective": "",
+   "negative": ""
+  },
+  "composition": {
+   "segments": [],
+   "audio": [],
+   "credits": []
+  },
+  "credits": [],
+  "media": [],
+  "links": {
+   "summary": "/api/v1/publications/pub_NOCREDIT1/summary"
+  }
+ }
+}

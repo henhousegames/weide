@@ -1,0 +1,123 @@
+{
+ "_note": "Contract fixture for the publications' `credits` field (video-service, 2026-11-21): the live GET /api/v1/publications was still empty, so the items follow the service's documented shape. pub_CREDITS01 is a compose with a Stable Audio SFX (license_notice) and a CC0 sound (audio_source); pub_NOCREDIT1 has an empty credits list; pub_AUDIO0001 is an audio-only publication (audio_url, no video, poster_url null). Hashes are placeholders (tests substitute their own media).",
+ "publications": [
+  {
+   "public_id": "pub_CREDITS01",
+   "character": "maehbot",
+   "caption": "Credits-Test 01",
+   "approved_at": "2026-11-21T22:00:00.000+00:00",
+   "task": "compose",
+   "model": {
+    "id": "compose",
+    "display_name": "Compose (ffmpeg edit of finished generations)"
+   },
+   "sha256": "abababab00000000000000000000000000000000000000000000000000000000",
+   "mime": "video/mp4",
+   "video_url": "/api/v1/publications/pub_CREDITS01/media/output",
+   "image_url": null,
+   "poster_url": "/api/v1/publications/pub_CREDITS01/media/poster",
+   "media": [
+    {
+     "kind": "output",
+     "mime": "video/mp4",
+     "sha256": "abababab00000000000000000000000000000000000000000000000000000000",
+     "url": "/api/v1/publications/pub_CREDITS01/media/output"
+    }
+   ],
+   "links": {
+    "summary": "/api/v1/publications/pub_CREDITS01/summary"
+   },
+   "credits": [
+    {
+     "kind": "license_notice",
+     "text": "Powered by Stability AI",
+     "model": "Stable Audio 3 Small SFX",
+     "license": {
+      "id": "Stability-AI-Community-2024-07-05",
+      "url": "https://stability.ai/community-license-agreement"
+     }
+    },
+    {
+     "kind": "audio_source",
+     "text": "Sound: \"Hen clucking\" (Freesound, CC0 1.0)",
+     "model": null,
+     "license": {
+      "id": "CC0-1.0",
+      "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+     }
+    }
+   ]
+  },
+  {
+   "public_id": "pub_NOCREDIT1",
+   "character": "maehbot",
+   "caption": "Credits-Test T1",
+   "approved_at": "2026-11-21T22:00:00.000+00:00",
+   "task": "i2v",
+   "model": {
+    "id": "compose",
+    "display_name": "Compose (ffmpeg edit of finished generations)"
+   },
+   "sha256": "abababab00000000000000000000000000000000000000000000000000000000",
+   "mime": "video/mp4",
+   "video_url": "/api/v1/publications/pub_NOCREDIT1/media/output",
+   "image_url": null,
+   "poster_url": "/api/v1/publications/pub_NOCREDIT1/media/poster",
+   "media": [
+    {
+     "kind": "output",
+     "mime": "video/mp4",
+     "sha256": "abababab00000000000000000000000000000000000000000000000000000000",
+     "url": "/api/v1/publications/pub_NOCREDIT1/media/output"
+    }
+   ],
+   "links": {
+    "summary": "/api/v1/publications/pub_NOCREDIT1/summary"
+   },
+   "credits": []
+  },
+  {
+   "public_id": "pub_AUDIO0001",
+   "character": "maehbot",
+   "caption": "Credits-Test 01",
+   "approved_at": "2026-11-21T22:00:00.000+00:00",
+   "task": "audio",
+   "model": {
+    "id": "stable-audio-3-small-sfx",
+    "display_name": "Stable Audio 3 Small SFX"
+   },
+   "sha256": "abababab00000000000000000000000000000000000000000000000000000000",
+   "mime": "audio/wav",
+   "video_url": null,
+   "image_url": null,
+   "poster_url": null,
+   "media": [
+    {
+     "kind": "output",
+     "mime": "audio/wav",
+     "sha256": "abababab00000000000000000000000000000000000000000000000000000000",
+     "url": "/api/v1/publications/pub_AUDIO0001/media/output"
+    }
+   ],
+   "links": {
+    "summary": "/api/v1/publications/pub_AUDIO0001/summary"
+   },
+   "credits": [
+    {
+     "kind": "license_notice",
+     "text": "Powered by Stability AI",
+     "model": "Stable Audio 3 Small SFX",
+     "license": {
+      "id": "Stability-AI-Community-2024-07-05",
+      "url": "https://stability.ai/community-license-agreement"
+     }
+    }
+   ],
+   "audio_url": "/api/v1/publications/pub_AUDIO0001/media/output"
+  }
+ ],
+ "revoked": [],
+ "since": null,
+ "next_since": "2026-11-21T22:00:00.000+00:00",
+ "has_more": false
+}
