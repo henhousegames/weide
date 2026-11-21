@@ -71,3 +71,7 @@
 @media (min-width: 1024px) {
   .pv-panel { padding: 18px 0 0; max-width: 560px; }
 }
+
+/* preview cards have no reactions yet: no empty counter column, the caption gets the full width */
+.pv-card .reacts--rail { display: none; }
+.pv-card .post__overlay { right: 0; padding-right: 14px; }
