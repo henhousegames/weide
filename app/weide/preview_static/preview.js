@@ -10,6 +10,8 @@
   const remember = (card) => { if (card && card.preview) previews.set(String(card.id), card.preview); };
   const TASKS = { t2i: "Text → Bild", i2i: "Bild → Bild", t2v: "Text → Video", i2v: "Bild → Video" };
   const SHORT = { draft: "Entwurf", approved: "Freigegeben" };
+  const SIM_NOTE = "Startbild aus eigener Simulation";
+  const simNote = (p) => (p.start_source_sim === true ? el("span", "gen-note", SIM_NOTE) : null);
 
   const origFetch = window.fetch.bind(window);
   window.fetch = async function (input, init) {
@@ -61,7 +63,7 @@
 
   function facts(p) {
     const rows = [
-      ["Modell", p.model],
+      ["Modell", p.model ? [p.model, simNote(p)] : null],
       ["Aufgabe", p.task ? (TASKS[p.task] ? `${TASKS[p.task]} (${p.task})` : p.task) : null],
       ["Auflösung", p.width && p.height ? `${p.width} × ${p.height}` : null],
       ["Bildrate", p.fps ? `${num(p.fps, 2)} fps` : null],
@@ -70,7 +72,7 @@
       ["Erstellt", date(p.created_at)],
     ].filter(([, v]) => v);
     const dl = el("dl", "pv-facts");
-    for (const [k, v] of rows) dl.append(el("dt", null, k), el("dd", null, v));
+    for (const [k, v] of rows) dl.append(el("dt", null, k), el("dd", null, ...[].concat(v)));
     return dl;
   }
 
@@ -101,6 +103,13 @@
     article.classList.add("pv-card", `pv-card--${p.state}`);
     const media = article.querySelector(".post__frame, .postpage__media .media, .media, .textpost");
     if (media) media.append(el("div", "pv-tags", pill(p)));
+    // the model note: under the caption on cards (preview cards carry no "Erstellt mit" badge)
+    const note = !article.classList.contains("postpage") && simNote(p);
+    if (note) {
+      const at = article.querySelector(".post__overlay");
+      if (at) at.append(el("span", "gen-line", note));
+      else article.querySelector(".post__more")?.before(el("span", "gen-line pv-note-line", note));
+    }
     if (article.classList.contains("postpage")) {
       article.classList.add("pv-detail");
       if (p.caption_is_fallback) article.classList.add("pv-detail--nocaption");

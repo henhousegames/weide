@@ -670,6 +670,11 @@ a.gen-badge:hover { color: var(--ink); background: var(--ground-2); }
 .gen-badge--none { border-style: dashed; color: var(--ink-3); }
 .gen-badge--none::before { background: var(--ink-3); }
 .postpage .gen-badge { margin-left: 0; }
+.gen-line { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0 8px; max-width: 100%; }
+.gen-note { color: var(--ink-3); font-size: 12px; font-weight: 550; font-variation-settings: "wdth" 85; }
+.gen-line .gen-note { margin-top: 8px; }
+.post__overlay .gen-line .gen-note { margin-top: 2px; color: rgba(255, 255, 255, .72); text-shadow: 0 1px 2px rgba(0, 0, 0, .5); }
+.view-sub .gen-note { font-size: inherit; }
 .genpage { padding: 0 0 24px; }
 .gen__id { margin: 10px 16px 0; }
 .gen__table { width: 100%; border-collapse: collapse; font-size: 13.5px; }

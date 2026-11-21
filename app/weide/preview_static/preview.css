@@ -75,3 +75,7 @@
 /* preview cards have no reactions yet: no empty counter column, the caption gets the full width */
 .pv-card .reacts--rail { display: none; }
 .pv-card .post__overlay { right: 0; padding-right: 14px; }
+
+/* "Startbild aus eigener Simulation" next to the model in the draft detail and on cards */
+.pv-facts dd .gen-note { margin-left: 8px; }
+.pv-note-line { margin: 4px 16px 0; }
