@@ -1,0 +1,42 @@
+{
+ "_note": "The live GET /api/v1/publications was empty on 2026-11-21 (no approvals yet); this fixture is the example of the service's API.md 'Publishing' section, with the elided hashes filled in.",
+ "publications": [
+  {
+   "public_id": "pub_OOmZWSs4hgWgwvf5Ffoc",
+   "character": "maehbot",
+   "caption": "Neighbour report",
+   "approved_at": "2026-11-21T17:09:17.069+00:00",
+   "task": "t2v",
+   "model": {
+    "id": "ltx-2.5-distilled",
+    "display_name": "LTX-2.5 22B distilled (I2V + joint audio)"
+   },
+   "sha256": "6fac57ec00000000000000000000000000000000000000000000000000000000",
+   "mime": "video/mp4",
+   "video_url": "/api/v1/publications/pub_OOmZWSs4hgWgwvf5Ffoc/media/output",
+   "image_url": null,
+   "poster_url": "/api/v1/publications/pub_OOmZWSs4hgWgwvf5Ffoc/media/poster",
+   "media": [
+    {
+     "kind": "output",
+     "mime": "video/mp4",
+     "sha256": "6fac57ec00000000000000000000000000000000000000000000000000000000",
+     "url": "/api/v1/publications/pub_OOmZWSs4hgWgwvf5Ffoc/media/output"
+    },
+    {
+     "kind": "poster",
+     "mime": "image/png",
+     "sha256": "d9d2584e00000000000000000000000000000000000000000000000000000000",
+     "url": "/api/v1/publications/pub_OOmZWSs4hgWgwvf5Ffoc/media/poster"
+    }
+   ],
+   "links": {
+    "summary": "/api/v1/publications/pub_OOmZWSs4hgWgwvf5Ffoc/summary"
+   }
+  }
+ ],
+ "revoked": [],
+ "since": null,
+ "next_since": "2026-11-21T17:09:17.069+00:00",
+ "has_more": false
+}

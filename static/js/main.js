@@ -1,7 +1,7 @@
 // Hash router: #/  #/w/<world>  #/p/<id>  #/u/<slug>  #/heute[/<YYYY-MM-DD>]  #/woche[/<YYYY-Www>]  #/leute  #/g/<public_id>
 import { api } from "./api.js";
 import { resetPlayers } from "./player.js";
-import { state } from "./ui.js";
+import { siteFooter, state } from "./ui.js";
 import { dayLabel, h, mount } from "./util.js";
 import { feedView, generationView, notFound, peopleView, postView, profileView, railView, topView } from "./views.js";
 
@@ -55,6 +55,7 @@ async function render() {
     if (e.status === 404 || e.status === 400) notFound(view, r.missing || "Diese Seite gibt es nicht.");
     else mount(view, h("p", { class: "error" }, `${appName()} hakt gerade. Bitte gleich nochmal versuchen.`));
   }
+  view.append(siteFooter());          // every page: fictional content, no affiliation with named brands
   refreshRail();
 }
 
@@ -77,7 +78,7 @@ async function start() {
     state.meta = await api.meta();
   } catch (e) {
     console.error(e);
-    mount(view, h("p", { class: "error" }, `${appName()} ist gerade nicht erreichbar. Bitte gleich nochmal versuchen.`));
+    mount(view, h("p", { class: "error" }, `${appName()} ist gerade nicht erreichbar. Bitte gleich nochmal versuchen.`), siteFooter());
     return;
   }
   document.getElementById("today").textContent = dayLabel(state.meta.today);

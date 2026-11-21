@@ -1,7 +1,7 @@
 // Views: feed, post detail, profile, leaderboards, people, the desktop rail.
 // Copy is in-world German; CLI hints live in the README (and the collapsed "Quelle und Ranking").
 import { api } from "./api.js";
-import { avatar, earTag, genBadge, media, postCard, postHead, reactionBar, state } from "./ui.js";
+import { avatar, earTag, genBadge, media, postCard, postHead, reactionBar, robotNote, state } from "./ui.js";
 import { compact, copy, dayLabel, dec, h, icons, longDay, mount, num, plural, score, when } from "./util.js";
 
 const PAGE = 8;
@@ -119,6 +119,7 @@ export async function postView(root, id) {
         likedBy(p),
         caption,
         genBadge(p, { withMissing: true }),
+        robotNote(p),
         moments,
         h("section", { class: "block" },
           h("h2", {}, n ? plural(n, "Kommentar", "Kommentare") : "Kommentare"),

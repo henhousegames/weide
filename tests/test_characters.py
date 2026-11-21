@@ -11,7 +11,7 @@ from weide.server import create_app
 
 from .conftest import REPO
 
-PROFILE_KEYS = set(json.loads((REPO / "data/accounts/hannes.json").read_text()))
+PROFILE_KEYS = set(json.loads((REPO / "data/accounts/hannes.json").read_text())) | {"robot"}   # robot: added after that export
 
 
 def test_seed_files_are_public_and_complete():

@@ -24,6 +24,10 @@ from zoneinfo import ZoneInfo
 
 APP_NAME = "henhouse"
 APP_TAGLINE = "Das Netzwerk für Creator mit Fell, Feierabend oder Firmware"
+# Shown in the footer of every page and on robot posts. static/js/util.js keeps the same text as a
+# fallback, because the live site's data/meta.json may predate this field.
+DISCLAIMER = ("Fiktive, KI-generierte Inhalte. Keine Verbindung zu Unitree Robotics oder NVIDIA; "
+              "Marken gehören ihren Inhabern.")
 APP_SLUG = re.sub(r"[^a-z0-9]+", "", APP_NAME.lower()) or "app"
 ENV_PREFIX = APP_SLUG.upper() + "_"
 LEGACY_SLUG = "weide"                      # previous app name: env vars, db file, browser storage keys

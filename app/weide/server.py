@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import bump_bucket, comment_counts, connect, connect_readonly, jload, reaction_totals, resolve_post
-from .generation import PUBLIC_ID, public_summary
+from .generation import PUBLIC_ID, model_short_label, public_summary
 from .media import MediaError, avatar_file, media_exists, media_file, media_kind, thumb_file
 from .ranking import combine, engagement, engagement_score, iso_week, today, top, window
 
@@ -32,11 +32,21 @@ def thumb_url(rel: str | None, w: int = 540) -> str | None:
     return f"/thumb/{w}/{rel}" if rel else None
 
 
+def is_robot(kind: str | None, profile_json: str | None = None) -> bool:
+    """Robot characters get the disclaimer line on their posts: kind robot, unless the account's
+    profile sets a boolean `robot` (either way)."""
+    prof = jload(profile_json, None) if profile_json else None
+    flag = prof.get("robot") if isinstance(prof, dict) else None
+    return flag if isinstance(flag, bool) else kind == "robot"
+
+
 def account_brief(r: sqlite3.Row | dict, prefix: str = "") -> dict:
     g = (lambda k: r[prefix + k])
+    keys = r.keys()
     return {
         "slug": g("slug"), "handle": g("handle"), "display_name": g("display_name"), "kind": g("kind"),
         "avatar_url": f"/avatar/{g('slug')}.jpg" if g("avatar") else None, "color": g("color"),
+        "robot": is_robot(g("kind"), g("profile_json") if prefix + "profile_json" in keys else None),
     }
 
 
@@ -46,7 +56,13 @@ def public_generation(r: sqlite3.Row) -> dict | None:
     gen = jload(r["generation_json"], None)
     if not r["public_id"] or not isinstance(gen, dict):
         return None
-    return {"public_id": r["public_id"], **{k: gen[k] for k in config.PUBLIC_GENERATION_KEYS if k in gen}}
+    out = {"public_id": r["public_id"], **{k: gen[k] for k in config.PUBLIC_GENERATION_KEYS if k in gen}}
+    label = model_short_label(gen.get("model_label")) or model_short_label(gen.get("model"))
+    if label:
+        out["model_label"] = label        # always the short string, never a dict or its repr
+    else:
+        out.pop("model_label", None)
+    return out
 
 
 def public_source(src: str | None) -> str | None:
@@ -56,7 +72,7 @@ def public_source(src: str | None) -> str | None:
 
 POST_SQL = """
 SELECT p.*, a.slug a_slug, a.handle a_handle, a.display_name a_display_name, a.kind a_kind, a.avatar a_avatar,
-       a.color a_color,
+       a.color a_color, a.profile_json a_profile_json,
        (SELECT COUNT(*) FROM posts m WHERE m.parent_id = p.id AND m.status = 'published') AS moment_count
 FROM posts p JOIN accounts a ON a.id = p.account_id
 """
@@ -89,7 +105,7 @@ def post_dicts(con: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict]:
 
 def threaded_comments(con: sqlite3.Connection, post_id: int) -> list[dict]:
     rows = con.execute(
-        "SELECT c.*, a.slug, a.handle, a.display_name, a.kind, a.avatar, a.color FROM comments c "
+        "SELECT c.*, a.slug, a.handle, a.display_name, a.kind, a.avatar, a.color, a.profile_json FROM comments c "
         "JOIN accounts a ON a.id = c.account_id WHERE c.post_id = ? ORDER BY c.ts, c.id", (post_id,)).fetchall()
     nodes = {r["id"]: {"id": r["id"], "text": r["text"], "created_at": r["created_at"], "source": r["source"],
                        "reply_to": r["reply_to"], "account": account_brief(r), "replies": []} for r in rows}
@@ -171,7 +187,7 @@ def create_app(db_path: str | Path | None = None, *, readonly: bool = False,
         with db() as con:
             n = con.execute(f"SELECT COUNT(*) FROM posts p WHERE p.parent_id IS NULL AND {PUBLISHED}").fetchone()[0]
         return {
-            "app_name": config.APP_NAME, "tagline": config.APP_TAGLINE, "today": d.isoformat(), "week": iso_week(d),
+            "app_name": config.APP_NAME, "tagline": config.APP_TAGLINE, "disclaimer": config.DISCLAIMER, "today": d.isoformat(), "week": iso_week(d),
             "reactions": [{"key": k, **{kk: v[kk] for kk in ("label", "emoji")}} for k, v in config.REACTIONS.items()],
             "posts": n,
             "cli": "uv run weide",

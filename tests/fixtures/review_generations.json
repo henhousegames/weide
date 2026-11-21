@@ -1,0 +1,104 @@
+{
+ "_note": "Trimmed copy of one live page of GET /api/v1/review/generations (2026-11-21), sanitized: 3 items, has_more set false.",
+ "items": [
+  {
+   "id": "gen_f5d6526cb5374a54a4c2",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T15:44:14.846+00:00",
+   "finished_at": "2026-11-21T15:44:32.797+00:00",
+   "task": "t2i",
+   "model": {
+    "id": "flux2-klein-4b",
+    "display_name": "FLUX.2 Klein 4B (text + reference to image)"
+   },
+   "labels": {
+    "test": "flux-a",
+    "approval": "owner 2026-11-21: okay, lets start our tests"
+   },
+   "prompt_original": "A photoreal anthropomorphic hen influencer with glossy chestnut-brown plumage, real hen anatomy, not plush, and a small bright red comb stands behind a wooden farmhouse kitchen counter and looks straight into the lens. Her wings are folded flat against her body, no hands visible. In the foreground on the counter, large and sharp: a ceramic bowl full of brown eggs and a steel whisk. Warm morning light from a window on the left, rustic shelves with jars behind her, plain walls, no signage, no text, no logos. Vertical portrait framing, medium shot from the chest up, eye level. No phone, tablet or tripod visible, nothing in front of her.",
+   "output": {
+    "mime": "image/png",
+    "width": 864,
+    "height": 1536,
+    "fps": null,
+    "duration_s": null,
+    "has_audio": false,
+    "sha256": "f5b2973af5de71b698432c904907eab7a6afd32a966f2ca614542490345d1821"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_f5d6526cb5374a54a4c2/media/output",
+    "poster": "/api/v1/review/generations/gen_f5d6526cb5374a54a4c2/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_f5d6526cb5374a54a4c2"
+  },
+  {
+   "id": "gen_2021ab8af75d4cf39bc8",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T16:59:35.625+00:00",
+   "finished_at": "2026-11-21T17:00:31.731+00:00",
+   "task": "i2v",
+   "model": {
+    "id": "ltx-2.5-distilled",
+    "display_name": "LTX-2.5 22B distilled (I2V + joint audio)"
+   },
+   "labels": {
+    "test": "ltx-a",
+    "approval": "owner 2026-11-21: okay, lets start our tests"
+   },
+   "prompt_original": "The chestnut-brown hen behind the farmhouse kitchen counter looks straight into the lens and says immediately at the start, in a cheerful, slightly smug German voice: \"Leute, heute gibt's Rührei!\" While she speaks she gives one big whole-head nod toward the bowl of eggs, then looks back into the lens. One continuous shot: she stays in the same spot behind the counter the whole clip, wings folded, no hands visible, no other person or animal appears, only the hen speaks. Audio: her voice and a quiet kitchen room tone, no music. Static locked-off shot, the camera does not move, no zoom, no push-in.",
+   "output": {
+    "mime": "video/mp4",
+    "width": 768,
+    "height": 1344,
+    "fps": 24.0,
+    "duration_s": 5.042,
+    "has_audio": true,
+    "sha256": "36f3ed7dc3ef61d1065e8244b22ebcdc1dfd8c0658ef1f965236bfd5ac74d555"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_2021ab8af75d4cf39bc8/media/output",
+    "poster": "/api/v1/review/generations/gen_2021ab8af75d4cf39bc8/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_2021ab8af75d4cf39bc8"
+  },
+  {
+   "id": "gen_aad3e54035184c259c4c",
+   "status": "ready_for_review",
+   "created_at": "2026-11-21T17:34:58.702+00:00",
+   "finished_at": "2026-11-21T17:35:12.784+00:00",
+   "task": "t2i",
+   "model": {
+    "id": "flux2-klein-4b",
+    "display_name": "FLUX.2 Klein 4B (text + reference to image)"
+   },
+   "labels": {
+    "character": "gustav",
+    "story": "g1-test-01",
+    "beat": "0",
+    "shot": "ref",
+    "view": "front",
+    "take": "1"
+   },
+   "prompt_original": "Full-body front view of Gustav, an original humanoid robot character: a slim, compact bipedal humanoid robot about 1.3 metres tall, generic industrial design, no logos, no text, no brand marks anywhere. Matte light-grey and silver body shells, black exposed joints with round disc-shaped actuator housings at the shoulders, elbows, hips and knees. A small rounded head with a smooth glossy black face visor, no mouth, no human face, a short black neck. Slim torso with a dark-grey chest plate, thin segmented arms, slim legs with large round knee actuators, small flat feet. Each hand is a three-fingered robotic hand: exactly one thumb and two fingers, matte dark grey, with visible joints, not a human hand. He stands upright in a neutral pose, feet hip-width apart and planted flat on the floor, arms hanging straight down at his sides, hands open and relaxed beside his thighs, visor facing the camera. Plain seamless light-grey studio background, soft even studio light, sharp focus, photoreal. No logos, no text, no signage. Vertical portrait framing, the whole robot from head to feet in frame, eye level.",
+   "output": {
+    "mime": "image/png",
+    "width": 864,
+    "height": 1536,
+    "fps": null,
+    "duration_s": null,
+    "has_audio": false,
+    "sha256": "aefb212292a7eefa6f26fce4c42dc89f1b63be38a131f598446f957f3d5f6310"
+   },
+   "media": {
+    "output": "/api/v1/review/generations/gen_aad3e54035184c259c4c/media/output",
+    "poster": "/api/v1/review/generations/gen_aad3e54035184c259c4c/media/poster"
+   },
+   "publication": null,
+   "lab_path": "/#/g/gen_aad3e54035184c259c4c"
+  }
+ ],
+ "next_since": "2026-11-21T17:35:12.784+00:00",
+ "has_more": false
+}

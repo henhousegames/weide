@@ -18,6 +18,7 @@ data/gen/<public_id>.json:
 """
 from __future__ import annotations
 
+import ast
 import posixpath
 import re
 import sqlite3
@@ -28,6 +29,31 @@ from .db import jload
 PUBLIC_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 REDACTED = "[redacted]"
 PRIVATE_INPUT = "privater Input"
+_TRAILING_PAREN = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def model_short_label(model: Any) -> str | None:
+    """Short, human model label for cards, captions, badges and summaries ("FLUX.2 Klein 4B").
+
+    `model` is the service's {id, display_name} object or a plain string. Uses display_name (then name,
+    then id) with a trailing parenthetical such as "(text + reference to image)" removed. Never returns
+    the repr of a dict: a string that is one (stored by older code) is parsed back first."""
+    if isinstance(model, str):
+        text = model.strip()
+        if text.startswith("{") and text.endswith("}"):
+            try:
+                parsed = ast.literal_eval(text)
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                return None
+            return model_short_label(parsed) if isinstance(parsed, dict) else None
+        short = _TRAILING_PAREN.sub("", text).strip()
+        return short or text or None
+    if isinstance(model, dict):
+        for k in ("display_name", "name", "id"):
+            label = model_short_label(model.get(k)) if isinstance(model.get(k), str) else None
+            if label:
+                return label
+    return None
 
 _DROP_EXACT = {
     "path", "paths", "file", "files", "filename", "filenames", "filepath", "dir", "directory", "cwd", "log", "logs",
@@ -142,6 +168,9 @@ def public_summary(con: sqlite3.Connection, row: sqlite3.Row) -> dict | None:
     raw_inputs = gen.get("inputs")
     body = sanitize({k: v for k, v in gen.items() if k not in ("inputs", "public_id", "post_id")})
     out = {"public_id": row["public_id"], "post_id": row["id"], **body}
+    label = model_short_label(gen.get("model_label")) or model_short_label(gen.get("model"))
+    if label:
+        out["model_label"] = label
     if raw_inputs is not None:
         items = raw_inputs if isinstance(raw_inputs, list) else [raw_inputs]
         out["inputs"] = [public_input(con, x) for x in items]

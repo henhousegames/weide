@@ -1,11 +1,15 @@
 // Private preview only (served by `weide serve --preview`, never part of the static export).
-// Adds the fixed PREVIEW banner and marks preview cards (approved-not-live / drafts). Cards themselves
-// are rendered by the normal frontend; this script only remembers which ids are previews (from the API
-// responses) and decorates those cards. Reactions are disabled: the preview is read-only.
+// Adds the slim PREVIEW bar, a small status pill on preview cards (approved-not-live / drafts) and turns
+// the post page of a preview card (#/p/vs-<id>) into the draft detail: large media, prompt, model, task,
+// output facts, created date and the Lab link. Cards themselves are rendered by the normal frontend; this
+// script remembers which ids are previews (from the API responses) and decorates those cards.
+// Reactions are disabled: the preview is read-only.
 (function () {
   "use strict";
   const previews = new Map();          // card id -> preview info
   const remember = (card) => { if (card && card.preview) previews.set(String(card.id), card.preview); };
+  const TASKS = { t2i: "Text → Bild", i2i: "Bild → Bild", t2v: "Text → Video", i2v: "Bild → Video" };
+  const SHORT = { draft: "Entwurf", approved: "Freigegeben" };
 
   const origFetch = window.fetch.bind(window);
   window.fetch = async function (input, init) {
@@ -23,31 +27,68 @@
     return res;
   };
 
-  function el(tag, cls, text) {
+  function el(tag, cls, ...children) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
-    if (text) e.textContent = text;
+    for (const c of children) if (c !== null && c !== undefined && c !== "") e.append(c);
     return e;
   }
 
-  function marker(p) {
-    const m = el("div", `pv-marker pv-marker--${p.state}`);
-    m.append(el("span", "pv-marker__label", p.label));
-    if (p.state === "draft" && p.lab_url) {
-      const a = el("a", "pv-marker__lab", "Im Lab öffnen");
-      a.href = p.lab_url;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      m.append(a);
-    }
-    if (p.model) m.append(el("span", "pv-marker__model", p.model));
+  function labLink(p, cls, text) {
+    if (!p.lab_url) return null;
+    const a = el("a", cls, text);
+    a.href = p.lab_url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    return a;
+  }
+
+  // small pill on the media: "● Entwurf" / "● Freigegeben" (full text in the title)
+  function pill(p) {
+    const m = el("span", `pv-pill pv-pill--${p.state}`, el("span", "pv-pill__dot"), SHORT[p.state] || p.label);
+    m.title = p.label;
     return m;
   }
 
+  function num(n, digits, min = 0) {
+    return Number(n).toLocaleString("de-DE", { minimumFractionDigits: min, maximumFractionDigits: digits });
+  }
+
+  function date(iso) {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d) ? d.toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" }) : null;
+  }
+
+  function facts(p) {
+    const rows = [
+      ["Modell", p.model],
+      ["Aufgabe", p.task ? (TASKS[p.task] ? `${TASKS[p.task]} (${p.task})` : p.task) : null],
+      ["Auflösung", p.width && p.height ? `${p.width} × ${p.height}` : null],
+      ["Bildrate", p.fps ? `${num(p.fps, 2)} fps` : null],
+      ["Dauer", p.duration_s ? `${num(p.duration_s, 1, 1)} s` : null],
+      ["Ton", p.has_audio === true ? "ja" : p.has_audio === false && p.fps ? "nein" : null],
+      ["Erstellt", date(p.created_at)],
+    ].filter(([, v]) => v);
+    const dl = el("dl", "pv-facts");
+    for (const [k, v] of rows) dl.append(el("dt", null, k), el("dd", null, v));
+    return dl;
+  }
+
+  function detailPanel(p) {
+    const lab = labLink(p, "pv-lab", "Im Lab öffnen");
+    if (lab) lab.append(el("span", "pv-lab__arrow", "↗"));
+    const status = el("div", "pv-panel__status", pill(p),
+      el("span", "pv-panel__hint", p.state === "draft" ? "wartet auf Freigabe" : "noch nicht live"));
+    const prompt = p.prompt
+      ? el("section", "pv-panel__block", el("h2", null, "Prompt"), el("p", "pv-prompt", p.prompt))
+      : null;
+    return el("section", "pv-panel", status, prompt,
+      el("section", "pv-panel__block", el("h2", null, "Details"), facts(p)), lab);
+  }
+
   function idOf(article) {
-    const more = article.querySelector("a.post__more");
-    const href = more ? more.getAttribute("href") : article.classList.contains("postpage") ? location.hash : "";
-    const m = /^#\/p\/(.+)$/.exec(href || "");
+    if (article.dataset.postId) return article.dataset.postId;
+    const m = /^#\/p\/(.+)$/.exec(article.classList.contains("postpage") ? location.hash : "");
     return m ? decodeURIComponent(m[1]) : null;
   }
 
@@ -58,13 +99,13 @@
     if (!p) return;
     article.dataset.pv = p.state;
     article.classList.add("pv-card", `pv-card--${p.state}`);
-    const head = article.querySelector(".post__head, .postpage__head");
-    (head || article).after(marker(p));
-    if (article.classList.contains("postpage") && p.prompt) {
-      const d = el("details", "more pv-prompt");
-      d.append(el("summary", null, "Prompt"), el("p", "pv-prompt__text", p.prompt));
+    const media = article.querySelector(".post__frame, .postpage__media .media, .media, .textpost");
+    if (media) media.append(el("div", "pv-tags", pill(p)));
+    if (article.classList.contains("postpage")) {
+      article.classList.add("pv-detail");
+      if (p.caption_is_fallback) article.classList.add("pv-detail--nocaption");
       const body = article.querySelector(".postpage__body");
-      if (body) body.append(d);
+      if (body) body.append(detailPanel(p));
     }
   }
 
@@ -75,9 +116,8 @@
   function banner() {
     const b = el("div", "pv-banner");
     b.setAttribute("role", "status");
-    b.append(el("strong", "pv-banner__tag", "PREVIEW"), el("span", "pv-banner__text", "privat · nicht öffentlich"));
-    const st = el("span", "pv-banner__status", "");
-    b.append(st);
+    const st = el("span", "pv-banner__status");
+    b.append(el("strong", "pv-banner__tag", "Preview"), el("span", "pv-banner__text", "privat"), st);
     document.body.prepend(b);
     document.documentElement.classList.add("pv");
     origFetch("/api/preview/status", { headers: { Accept: "application/json" } })
