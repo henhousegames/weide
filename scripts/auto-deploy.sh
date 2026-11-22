@@ -109,7 +109,10 @@ build_site() {
     restore_site
     die "weide deploy failed; nothing committed (site/ restored, retried next run)"
   fi
-  log "deploy: $(jq -c '{changed, changes, pull: (.pull // {} | {full, new, updated, unchanged, revoked}), posts: .export.posts, generations: .export.generations}' "$out")"
+  log "deploy: $(jq -c '{changed, changes, pull: (.pull // {} | {full, new, updated, unchanged, revoked}), posts: .export.posts, generations: .export.generations, failed_items: (.failed_items // [])}' "$out")"
+  if [ "$(jq '.failed_items // [] | length' "$out")" != 0 ]; then
+    log "WARNING: $(jq '.warnings | length' "$out") pull item(s) failed and are retried next run (failed_items above); the rest is published"
+  fi
   rm -f "$out"
   if [ -n "$(git status --porcelain -- site)" ]; then SITE_CHANGED=1; fi
 }

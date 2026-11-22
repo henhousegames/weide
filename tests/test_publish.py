@@ -364,10 +364,37 @@ def test_export_and_deploy_have_no_source_or_key(base_db, tmp_path, monkeypatch)
     again = deploy(site, dbp, **kw)
     assert again["errors"] == [] and again["changed"] is False and again["pull"]["new"] == 0
     assert deploy(site, dbp, full=True, **kw)["pull"]["unchanged"] == 1
-    # a failing pull stops before the export
+    # a failing item is a warning: the rest is still exported
     svc.pubs[0] = publication(caption="geändert", character="nobody", approved_at="2026-11-18T10:00:00+00:00")
     bad = deploy(site, dbp, **kw)
-    assert bad["errors"] and bad["export"] is None and bad["changed"] is False
+    assert bad["errors"] == [] and bad["warnings"] and bad["failed_items"] == [PID] and bad["export"] is not None
+    # a failing listing stops before the export
+    down = deploy(site, dbp, **{**kw, "transport": httpx.MockTransport(lambda r: httpx.Response(503))})
+    assert down["errors"] and down["pull"]["listing_failed"] and down["export"] is None and down["changed"] is False
+
+
+def test_one_bad_item_does_not_block_publishes_and_revocations(env, tmp_path):
+    con, svc, media, _, dbp = env
+    site = tmp_path / "site"
+    kw = dict(settings=ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc), today="2026-11-17")
+    assert deploy(site, dbp, **kw)["errors"] == []
+    cursor = db.get_meta(con, "publications_since")
+    svc.pubs.append(publication("pub_BAD01", character="nobody", approved_at="2026-11-18T09:00:00+00:00"))
+    svc.pubs.append(publication("pub_GOOD1", approved_at="2026-11-18T10:00:00+00:00"))
+    svc.revoked.append({"public_id": PID, "revoked_at": "2026-11-18T11:00:00+00:00"})
+    svc.pubs = [p for p in svc.pubs if p["public_id"] != PID]
+    res = deploy(site, dbp, **kw)
+    assert res["errors"] == [] and res["failed_items"] == ["pub_BAD01"]
+    assert res["pull"]["new"] == 1 and res["pull"]["revoked"] == 1 and res["changed"]
+    assert (site / "data/gen/pub_GOOD1.json").is_file() and not (site / f"data/gen/{PID}.json").exists()
+    assert not (site / "data/gen/pub_BAD01.json").exists()
+    assert db.get_meta(con, "publications_since") == cursor             # the bad item is fetched again
+    db.upsert_account(con, "nobody", kind="animal", handle="@nobody", display_name="Nobody")
+    con.commit()
+    res = deploy(site, dbp, **kw)
+    assert res["errors"] == [] and res["failed_items"] == [] and res["pull"]["new"] == 1
+    assert (site / "data/gen/pub_BAD01.json").is_file()
+    assert db.get_meta(con, "publications_since") == "2026-11-18T11:00:00+00:00"
 
 
 def test_export_of_published_generation_post(env, tmp_path):

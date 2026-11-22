@@ -81,8 +81,11 @@ media `pull-approved` writes into the repository root (`/media/gen/`, `/thumb/*/
 change (tracked or untracked) still stops the run.
 
 The command prints JSON. `"changed": false` means `site/` is byte-identical to before, so automation
-can skip the commit. `errors` (pull failures, leak check hits) make it exit non-zero; then do not
-commit `site/`. Nothing is committed or pushed by the command. The exported "today" (ranking pages)
+can skip the commit. `errors` (the publication listing could not be read, leak check hits) make it
+exit non-zero; then do not commit `site/`. A single failed item (unknown character, bad media, leaky
+credit, ...) is only a `warning`: its public_id is listed in `failed_items`, every other publication and
+revocation is exported, and since the pull keeps its cursor (and does not record a full pull) the item
+is retried on the next run. Nothing is committed or pushed by the command. The exported "today" (ranking pages)
 is the date of the newest published post unless `--today` is given, so the same data exports to the
 same files on any day. The export holds no build timestamps, so a full pull that changes nothing leaves
 `site/` byte-identical and the automation commits nothing.

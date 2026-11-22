@@ -577,7 +577,9 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                   thumb_root: Path | None = None, log: Callable[[str], None] = lambda s: None) -> dict:
     """Publish every approved publication and unpublish every revoked one (since the stored cursor,
     or all of them with `full` / without a cursor).
-    Returns {new, updated, unchanged, revoked, skipped, failed: [...], notes: [...], items: [...], incremental, full}.
+    Returns {new, updated, unchanged, revoked, skipped, failed: [...], failed_ids: [...], listing_failed, notes: [...],
+    items: [...], incremental, full}. `listing_failed` is True when the listing itself could not be read
+    (nothing was processed); `failed_ids` are the public_ids of failed items (when the id was valid).
     A full listing also unpublishes published generation posts missing from it (see _missing) and,
     when nothing failed (and not dry_run), stores its time as LAST_FULL_KEY.
     Audio-only publications are skipped (counted in `skipped`, logged, no post).
@@ -588,18 +590,22 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
     since = None if full else get_meta(con, CURSOR_KEY)
     since = since if isinstance(since, str) and since else None
     client = ServiceClient(settings, transport)
-    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "skipped": 0, "failed": [], "notes": [],
-                           "items": [], "dry_run": dry_run, "incremental": since is not None, "full": since is None}
+    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "skipped": 0, "failed": [],
+                           "failed_ids": [], "listing_failed": False, "notes": [], "items": [], "dry_run": dry_run,
+                           "incremental": since is not None, "full": since is None}
 
-    def fail(msg: str) -> None:
+    def fail(msg: str, pid: Any = None) -> None:
         msg = _redact(msg, settings.key)
         res["failed"].append(msg)
+        if isinstance(pid, str) and PUBLIC_ID.match(pid) and pid not in res["failed_ids"]:
+            res["failed_ids"].append(pid)
         log(f"failed {msg}")
 
     try:
         try:
             raw_pubs, raw_revoked, cursor = client.publications(since)
         except PublishError as e:
+            res["listing_failed"] = True
             fail(str(e))
             return res
         todo, revoked = _merge(raw_pubs, raw_revoked, fail)
@@ -614,14 +620,14 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
             try:
                 pub = Publication.parse(d)
             except PublishError as e:
-                fail(f"publication #{n}: {e}")
+                fail(f"publication #{n}: {e}", d.get("public_id") if isinstance(d, dict) else None)
                 continue
             try:
                 status, poster = _publish_item(con, client, pub, dry_run=dry_run, media_root=media_root,
                                                thumb_root=thumb_root)
             except (PublishError, ValueError, OSError, sqlite3.Error) as e:
                 con.rollback()
-                fail(f"{pub.public_id}: {e}" if not str(e).startswith(pub.public_id) else str(e))
+                fail(f"{pub.public_id}: {e}" if not str(e).startswith(pub.public_id) else str(e), pub.public_id)
                 continue
             res[status] += 1
             res["items"].append({"public_id": pub.public_id, "kind": pub.kind, "status": status,
@@ -642,7 +648,7 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                 r = _revoke(con, pid, at, dry_run=dry_run)
             except sqlite3.Error as e:
                 con.rollback()
-                fail(f"{pid}: revoke: {e}")
+                fail(f"{pid}: revoke: {e}", pid)
                 continue
             if r == "unknown":
                 res["notes"].append(f"{pid}: revoked, but no such post (nothing to do)")
