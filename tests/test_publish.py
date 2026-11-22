@@ -614,3 +614,22 @@ def test_start_source_flag_is_dropped_when_field_goes_away(env):
     svc.pubs = [{**publication(), "approved_at": "2026-11-18T17:00:00+00:00"}]
     assert run(con, svc, full=True)["updated"] == 1
     assert "start_source_sim" not in _record(con)
+
+
+def test_media_over_the_size_limit_fails_alone(env, monkeypatch):
+    import weide.publish as pub
+    assert pub.MAX_MEDIA_BYTES < 100 * 1000 * 1000                 # GitHub refuses files over 100 MB
+    con, svc, media, *_ = env
+    big = MP4 + b"\x00" * 400
+    svc.pubs = [publication("pub_BIG01", content=big), publication("pub_SMALL1", approved_at="2026-11-18T10:00:00Z")]
+    svc.media["pub_BIG01"] = big
+    monkeypatch.setattr(pub, "MAX_MEDIA_BYTES", len(MP4) + 100)
+    res = run(con, svc)
+    assert res["new"] == 1 and res["failed_ids"] == ["pub_BIG01"] and "byte limit" in res["failed"][0]
+    assert not (media / "gen/pub_BIG01.mp4").exists() and (media / "gen/pub_SMALL1.mp4").is_file()
+    # without a Content-Length the stream is cut off at the limit as well
+    real = svc.__call__
+    svc_nolen = lambda req: (lambda r: httpx.Response(r.status_code, content=iter([r.content])))(real(req)) \
+        if req.url.path.endswith("/media/output") else real(req)
+    res = pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc_nolen))
+    assert res["failed_ids"] == ["pub_BIG01"] and "byte limit" in res["failed"][0]

@@ -39,7 +39,8 @@ a usable identity the item fails (and is retried next run). `video/mp4` becomes 
 `image/jpeg` and `image/webp` an image post. Posts are matched by `generation:<public_id>` (the service
 exposes no run id), so reruns are idempotent: an unchanged item is skipped, a new caption, character or
 summary updates the post (it keeps its first post time). Media land in `media/gen/<public_id>.<ext>`
-(the list's sha256 is verified), posters in `thumb/540/gen/<public_id>.jpg` (the service poster, scaled
+(the list's sha256 is verified; a file over 95 MB fails the item, since GitHub refuses files over
+100 MB in the committed site), posters in `thumb/540/gen/<public_id>.jpg` (the service poster, scaled
 with ffmpeg; else a frame of the media via ffmpeg; without ffmpeg only a JPEG service poster is kept).
 
 Cursor: the service documents `revoked` as every withdrawal after `since`, so polling with `since` is

@@ -94,7 +94,8 @@ MAX_PAGES = 1000
 # mime -> (post kind, file extension)
 MEDIA_TYPES = {"video/mp4": ("reel", ".mp4"), "image/png": ("image", ".png"), "image/jpeg": ("image", ".jpg"),
                "image/webp": ("image", ".webp")}
-MAX_MEDIA_BYTES = 1 << 30          # 1 GiB: a web-size reel is far below this
+# site/ is committed: GitHub rejects files over 100 MB, so a bigger file would break every later push
+MAX_MEDIA_BYTES = 95 * 1000 * 1000
 POSTER_WIDTH = 540
 
 
@@ -293,11 +294,15 @@ class ServiceClient:
                     r.read()
                     raise self._fail(what, r)
                 expected = r.headers.get("content-length")
+                if expected is not None and expected.isdigit() and int(expected) > MAX_MEDIA_BYTES:
+                    raise PublishError(f"{what}: {int(expected)} bytes, over the {MAX_MEDIA_BYTES} byte limit "
+                                       "(GitHub's 100 MB file limit); not published")
                 with dest.open("wb") as f:
                     for chunk in r.iter_bytes(1 << 16):
                         n += len(chunk)
                         if n > MAX_MEDIA_BYTES:
-                            raise PublishError(f"{what}: larger than {MAX_MEDIA_BYTES} bytes")
+                            raise PublishError(f"{what}: larger than the {MAX_MEDIA_BYTES} byte limit "
+                                               "(GitHub's 100 MB file limit); not published")
                         h.update(chunk)
                         f.write(chunk)
         except httpx.HTTPError as e:
