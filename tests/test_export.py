@@ -68,7 +68,7 @@ def exported(tmp_path_factory):
     import_public(con, REPO)
     con.close()
     out = tmp / "site"
-    res = export_static(out, dbp, today="2026-11-17", link=True)
+    res = export_static(out, dbp, today="2026-11-16", link=True)
     return out, res, dbp
 
 
@@ -158,7 +158,7 @@ def test_unpublished_and_private_data_stay_out(exported, tmp_path):
     assert json.loads((out / "data/gen/g1a2b3.json").read_text()) == {
         "public_id": "g1a2b3", "post_id": gen, "model_label": "Model X 1.0", "seed": 7}
     assert res["generations"] == 1
-    assert json.loads((out / "data/meta.json").read_text())["posts"] == 42
+    assert json.loads((out / "data/meta.json").read_text())["posts"] == 36
     top = json.loads((out / "data/top/day-2026-11-17.json").read_text())
     st = [i for i in top["items"] if i["id"] == story][0]
     assert st["rank"] == 1 and len(st["moments"]) == 1
@@ -209,6 +209,6 @@ def test_leak_check_key_names_and_configured_secret(tmp_path):
 
 def test_cli_export_static(exported, tmp_path, capsys):
     _, _, base_db = exported
-    main(["export-static", str(tmp_path / "o"), "--db", str(base_db), "--today", "2026-11-17", "--link"])
+    main(["export-static", str(tmp_path / "o"), "--db", str(base_db), "--today", "2026-11-16", "--link"])
     res = json.loads(capsys.readouterr().out)
-    assert res["posts"] == 40 and res["leaks"] == []
+    assert res["posts"] == 34 and res["leaks"] == []

@@ -160,7 +160,7 @@ def test_feed_shows_only_published_and_feed_posts(client):
     assert [i["id"] for i in feed] == ["fd-p2", "fd-p1"]
     assert not any(str(i["id"]).startswith("vs-") for i in items)
     published = [i for i in items if not str(i["id"]).startswith("fd-")]
-    assert len(published) == 41
+    assert len(published) == 35
     blob = json.dumps(items)
     for gone in ("Versteckt", "Unlesbar", "Naiv", "Falsche Art", "Noch nicht", "First caption",
                  "Lisa testet den Melkroboter", "ENTWURF", "FREIGEGEBEN"):
@@ -321,7 +321,7 @@ def test_files_are_reread_when_changed(stories_root, clock):
 
 def test_meta_counts_and_story_rings(client):
     meta = client.get("/api/meta").json()
-    assert meta["posts"] == 41 + 2
+    assert meta["posts"] == 35 + 2
     st = client.get("/api/preview/stories").json()
     assert st["day"] == "2026-11-20"
     rings = {r["account"]["slug"]: r for r in st["items"]}

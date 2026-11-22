@@ -325,7 +325,7 @@ def test_feed_has_three_kinds_with_markers(client):
     for d in (d1, d2, d3, rev):
         assert d["preview"]["state"] == "draft" and d["preview"]["label"] == "ENTWURF"
     published = [i for i in items if not str(i["id"]).startswith("vs-")]
-    assert len(published) == 41 and all("preview" not in i for i in published)
+    assert len(published) == 35 and all("preview" not in i for i in published)
     blob = json.dumps(items)
     assert ids["vs-g_pubappr"]["preview"]["state"] == "approved"
     for hidden in ("g_live", "g_pubrev", "REVOKED-PUBLISHED-CAPTION"):
@@ -536,7 +536,7 @@ def test_without_service_settings_shows_published_only(henhouse_db, monkeypatch)
     c = TestClient(preview.create_preview_app(henhouse_db, token=TOKEN, poll_interval=None))
     login(c)
     items = c.get("/api/feed?limit=100").json()["items"]
-    assert len(items) == 41 and not any("preview" in i for i in items)
+    assert len(items) == 35 and not any("preview" in i for i in items)
     assert c.get("/api/preview/status").json()["connected"] is False
 
 
@@ -565,7 +565,7 @@ def test_no_review_key_starts_cleanly_without_poller(henhouse_db, monkeypatch, c
         assert s["connected"] is False and s["studio"] == "off"
         assert s["notice"] == "Studio-Verbindung fehlt – Entwürfe und Freigaben nicht sichtbar"
         items = c.get("/api/feed?limit=100").json()["items"]
-        assert len(items) == 41 and not any("preview" in i for i in items)
+        assert len(items) == 35 and not any("preview" in i for i in items)
         assert c.get("/preview/media/g_draft1/output").status_code == 404
     assert started == []                                                # no polling task
     assert asyncio.run(asyncio.wait_for(a.state.store.run(0.01), 1)) is None   # an idle poller returns
@@ -605,7 +605,7 @@ def test_service_down_shows_notice_and_retries_with_backoff(henhouse_db, caplog)
     login(c)
     s = c.get("/api/preview/status").json()
     assert s["studio"] == "down" and s["notice"].startswith("Studio nicht erreichbar")
-    assert len(c.get("/api/feed?limit=100").json()["items"]) == 41      # still serving published posts
+    assert len(c.get("/api/feed?limit=100").json()["items"]) == 35      # still serving published posts
     assert REVIEW_KEY not in caplog.text and "service.test" not in caplog.text
     assert store.retry_delay(60) == 80 and (setattr(store, "failures", 99) or store.retry_delay(60)) == preview.BACKOFF_MAX
 

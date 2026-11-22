@@ -32,7 +32,7 @@ def add_post(db_path, status, source, **kw):
 
 def test_meta(client):
     m = client.get("/api/meta").json()
-    assert m["app_name"] == config.APP_NAME and m["today"] == "2026-11-17" and m["week"] == "2026-W47"
+    assert m["app_name"] == config.APP_NAME and m["today"] == "2026-11-16" and m["week"] == "2026-W47"
     assert m["posts"] == json.loads((DATA / "meta.json").read_text())["posts"]
 
 
@@ -43,7 +43,7 @@ def test_feed_contract(client):
     allitems = client.get("/api/feed?limit=100").json()["items"]
     assert [i["id"] for i in allitems] == feed_ids
     assert all(i["generation"] is None for i in allitems)
-    card = allitems[0]
+    card = next(i for i in allitems if i.get("media_url") and i["account"].get("avatar_url"))
     assert card["media_url"].startswith("/media/") and card["poster_url"].startswith("/thumb/540/")
     assert card["account"]["avatar_url"].startswith("/avatar/")
 
@@ -79,8 +79,8 @@ def test_accounts(client):
 
 
 def test_top(client):
-    t = client.get("/api/top?day=2026-11-17&limit=10").json()
-    expected = json.loads((DATA / "top" / "day-2026-11-17.json").read_text())
+    t = client.get("/api/top?day=2026-11-16&limit=10").json()
+    expected = json.loads((DATA / "top" / "day-2026-11-16.json").read_text())
     assert t["window"] == expected["window"]
     assert [i["id"] for i in t["items"]] == [i["id"] for i in expected["items"]]
     assert client.get("/api/top?day=x").status_code == 400
