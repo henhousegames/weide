@@ -14,6 +14,10 @@ are still read as a fallback, so existing setups keep working. The prefixed name
   HENHOUSE_AVATAR_ROOT  square avatar images. Default: <repo>/avatar
   HENHOUSE_STATIC_DIR   frontend assets (app.css, js/). Default: <repo>/static
   HENHOUSE_TODAY        YYYY-MM-DD, the world's "today" (ranking windows); default: local date
+  HENHOUSE_FEED_DIR     preview only: curated feed dir (posts.jsonl, interactions.jsonl; read-only).
+                        Unset: the preview shows published posts, approvals and drafts (no curated feed)
+  HENHOUSE_CHARACTERS_DIR  preview only: character identities (<slug>/identity.md).
+                        Default: <feed dir>/../characters
 """
 from __future__ import annotations
 
@@ -66,6 +70,19 @@ DEFAULT_PORT = 8740
 
 # "Today" in the world. Defaults to the machine's local date; HENHOUSE_TODAY=YYYY-MM-DD overrides.
 TODAY_OVERRIDE = env("TODAY")
+
+
+
+def feed_dir() -> Path | None:
+    """HENHOUSE_FEED_DIR (no legacy fallback), read when the preview starts; None = no curated feed."""
+    v = os.environ.get(ENV_PREFIX + "FEED_DIR")
+    return Path(v).expanduser().resolve() if v else None
+
+
+def characters_dir(feed: Path) -> Path:
+    v = os.environ.get(ENV_PREFIX + "CHARACTERS_DIR")
+    return Path(v).expanduser().resolve() if v else feed.parent / "characters"
+
 
 # --- media -------------------------------------------------------------------------------
 VIDEO_EXT = {".mp4", ".webm", ".mov", ".m4v"}
