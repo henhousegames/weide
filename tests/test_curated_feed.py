@@ -369,3 +369,10 @@ def test_export_static_ignores_feed_dir(henhouse_db, stories_root, tmp_path, mon
     blob = "".join(f.read_text(errors="ignore") for f in (tmp_path / "b").rglob("*.json"))
     for s in ("Lisa im Heu", "Lisa (Feed)", "Zorro Bot", "fd-p1", BODY_MARKER):
         assert s not in blob
+
+
+@pytest.mark.parametrize("raw,expected", [("animal", "animal"), ("robot", "robot"), ("thing", "other"),
+                                          ("human", "human"), ("house", "house"), ("spaceship", "other")])
+def test_identity_kind_mapping(raw, expected):
+    from weide.feed import Identity
+    assert Identity.from_front_matter("x", {"kind": raw}).kind == expected

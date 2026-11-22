@@ -45,7 +45,7 @@ MAX_NAME = 80
 BIO_MAX = 150
 FRONT_MATTER_MAX_LINES = 64           # a front matter without a closing `---` in this many lines is ignored
 # identity.md `kind` -> account kind (existing kinds: animal | human | robot | other | follower | house)
-KIND_MAP = {"animal": "animal", "robot": "robot", "thing": "other", "human": "human", "other": "other"}
+KIND_MAP = {"animal": "animal", "robot": "robot", "thing": "other", "human": "human", "house": "house", "other": "other"}
 
 
 def parse_aware(value: Any) -> datetime | None:
