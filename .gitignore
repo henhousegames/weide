@@ -22,3 +22,8 @@ out/
 
 # local agent worktrees
 .claude/
+
+# media written by `weide pull-approved` into the repo-root media/thumb dirs (the published copies live
+# under site/, which stays committable: these patterns are anchored to the repository root)
+/media/gen/
+/thumb/*/gen/

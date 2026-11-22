@@ -53,11 +53,31 @@ fi
 
 # --- repository state ---------------------------------------------------------------------------
 
+# site/ is rebuilt from the database on every run, so leftovers of a failed run are dropped. Only paths
+# inside site/ are touched (pathspec rooted at the top of this repository; untracked ignored files stay).
+restore_site() {
+  if [ "$DRY_RUN" = 1 ]; then log "dry-run: would restore site/ to HEAD"; return 0; fi
+  if git cat-file -e "HEAD:site" 2>/dev/null; then
+    git checkout --quiet HEAD -- ':(top)site'
+  fi
+  git clean -fdq -- ':(top)site'
+}
+
+# Local changes that block a deploy: tracked changes and untracked files, except site/ (restored above)
+# and the media pull-approved writes into the repo root (gitignored; excluded here too, so a clone whose
+# .gitignore predates those patterns can still fast-forward to one that has them).
+dirty_paths() {
+  git status --porcelain -- ':(top)' ':(top,exclude)site' ':(top,exclude)media/gen' \
+    ':(top,glob,exclude)thumb/*/gen/**'
+}
+
 sync_main() {
-  local branch ahead behind
+  local branch ahead behind dirty
   branch=$(git symbolic-ref --quiet --short HEAD || true)
   [ "$branch" = "$BRANCH" ] || die "checked out '${branch:-detached}', expected $BRANCH (not switching automatically)"
-  [ -z "$(git status --porcelain)" ] || die "working tree is dirty; commit or clean it first"
+  restore_site
+  dirty=$(dirty_paths)
+  [ -z "$dirty" ] || die "working tree is dirty ($(printf '%s\n' "$dirty" | head -5 | tr '\n' ' ')); commit or clean it first"
   git fetch --quiet origin "$BRANCH" || die "git fetch failed"
   ahead=$(git rev-list --count "origin/$BRANCH..$BRANCH")
   behind=$(git rev-list --count "$BRANCH..origin/$BRANCH")
@@ -86,7 +106,8 @@ build_site() {
   if ! uv run --quiet weide deploy >"$out" 2>/dev/null; then
     log "deploy failed: $(jq -c '{errors: (.errors // [] | length), first_errors: (.errors // [] | .[:5]), pull: (.pull // {} | {new, updated, revoked})}' "$out" 2>/dev/null || echo 'no JSON output')"
     rm -f "$out"
-    die "weide deploy failed; nothing committed"
+    restore_site
+    die "weide deploy failed; nothing committed (site/ restored, retried next run)"
   fi
   log "deploy: $(jq -c '{changed, changes, pull: (.pull // {} | {full, new, updated, unchanged, revoked}), posts: .export.posts, generations: .export.generations}' "$out")"
   rm -f "$out"
@@ -194,10 +215,7 @@ sync_main
 build_site
 if [ ! -f "$MARKER" ] && [ -z "$(newest_public_id)" ]; then
   # before the first publication the timer is a no-op: no commit, no push, site/ back to HEAD
-  if [ "$SITE_CHANGED" = 1 ]; then
-    git checkout --quiet HEAD -- site 2>/dev/null || true
-    git clean -fdq -- site
-  fi
+  if [ "$SITE_CHANGED" = 1 ]; then restore_site; fi
   log "no published generation yet; not committing site/ (switch pending)"
   log "auto-deploy done"
   exit 0

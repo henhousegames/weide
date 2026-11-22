@@ -73,6 +73,13 @@ failed full pull is retried on the next run. The JSON reports `pull.full`.
 `scripts/auto-deploy.sh --dry-run` runs `pull-approved --dry-run --auto-full` (same decision, writes
 nothing).
 
+`scripts/auto-deploy.sh` never wedges on its own leftovers: `site/` is rebuilt from the database on
+every run, so the script restores it to `HEAD` (`git checkout HEAD -- site`, `git clean -fd -- site`;
+nothing outside `site/` is touched) at the start of each run and after a failed `weide deploy`. The
+media `pull-approved` writes into the repository root (`/media/gen/`, `/thumb/*/gen/`) are gitignored
+(anchored, so `site/media/gen/` stays committable) and not counted as local changes. Any other local
+change (tracked or untracked) still stops the run.
+
 The command prints JSON. `"changed": false` means `site/` is byte-identical to before, so automation
 can skip the commit. `errors` (pull failures, leak check hits) make it exit non-zero; then do not
 commit `site/`. Nothing is committed or pushed by the command. The exported "today" (ranking pages)
