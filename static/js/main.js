@@ -41,6 +41,7 @@ async function render() {
   resetPlayers();
   const r = route();
   app.dataset.view = r.view;
+  document.documentElement.dataset.view = r.view;     // the feed snaps the page scroller (app.css)
   for (const a of document.querySelectorAll(".tabs a")) {
     if (a.dataset.tab === r.tab) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -52,6 +53,7 @@ async function render() {
   } catch (e) {
     console.error(e);
     app.dataset.view = "error";
+    document.documentElement.dataset.view = "error";
     if (e.status === 404 || e.status === 400) notFound(view, r.missing || "Diese Seite gibt es nicht.");
     else mount(view, h("p", { class: "error" }, `${appName()} hakt gerade. Bitte gleich nochmal versuchen.`));
   }

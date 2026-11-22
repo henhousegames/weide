@@ -1,16 +1,27 @@
 // Shared building blocks: ear tags, avatars, media, reactions, post cards.
 import { api } from "./api.js";
 import { videoPlayer } from "./player.js";
-import { DISCLAIMER, compact, h, icons, num, plural, store, when } from "./util.js";
+import { DISCLAIMER, compact, h, icons, num, sharePost, store, svg, when } from "./util.js";
 
 export const state = { meta: null };
 
+// Account kinds as shown to people. "other" (identity.md kind "thing": a deposit bottle, a cap …) reads
+// as an object: a small "Ding" badge with a box icon on the tag; the raw kind is never shown.
+export const KIND_LABELS = { animal: "Tier", human: "Mensch", robot: "Roboter", other: "Ding", house: "Haus", follower: "Follower" };
+export const isThing = (account) => account?.kind === "other" || account?.kind === "thing";
+
+export function kindBadge(account) {
+  if (!isThing(account)) return null;
+  return h("span", { class: "tag__kind", title: "Ding – ein Gegenstand mit Account" },
+    svg(["M4 8l8-4 8 4v8l-8 4-8-4z", "M4 8l8 4 8-4", "M12 12v8"]), "Ding");
+}
+
 export function earTag(account, { link = true } = {}) {
-  const mod = { human: "human", robot: "robot", follower: "follower", house: "house" }[account.kind];
+  const mod = { human: "human", robot: "robot", follower: "follower", house: "house", other: "thing", thing: "thing" }[account.kind];
   const cls = `tag${mod ? ` tag--${mod}` : ""}`;
   return link
-    ? h("a", { class: cls, href: `#/u/${encodeURIComponent(account.slug)}` }, account.handle)
-    : h("span", { class: cls }, account.handle);
+    ? h("a", { class: cls, href: `#/u/${encodeURIComponent(account.slug)}` }, account.handle, kindBadge(account))
+    : h("span", { class: cls }, account.handle, kindBadge(account));
 }
 
 function initials(name) {
@@ -42,8 +53,9 @@ export function avatar(account, size = 36, link = true) {
     : h("span", attrs, inner);
 }
 
-// Every visual post sits in the same 9:16 frame. Videos fill it; images keep their own shape
-// (object-fit: contain) over a blurred, dimmed copy of themselves, so any aspect ratio looks intended.
+// Every post fills the same frame (a full-screen slide in the feed, 9:16 on the post page). Videos fill
+// it (landscape sources are contained, see player.js); images keep their own shape (object-fit: contain)
+// over a blurred, dimmed copy of themselves, so any aspect ratio looks intended; text posts are the text.
 export function media(post, { autoplay = true } = {}) {
   if (post.media_kind === "video") {
     const box = h("div", { class: "media media--video" });
@@ -52,6 +64,7 @@ export function media(post, { autoplay = true } = {}) {
       box.append(h("div", { class: "media__missing" }, "Video wird noch gerendert."));
       return box;
     }
+    if (post.poster_url) box.append(h("img", { class: "media__backdrop", src: post.poster_url, alt: "", "aria-hidden": "true", loading: "lazy" }));
     box.append(...videoPlayer(post.media_url, post.poster_url, { autoplay }));
     if (post.kind === "collection") box.append(h("span", { class: "media__badge" }, "Sammlung"));
     else if (post.kind === "story") box.append(h("span", { class: "media__badge" }, "Story"));
@@ -68,7 +81,9 @@ export function media(post, { autoplay = true } = {}) {
       h("p", { class: "media__audiocap" }, post.caption || ""),
       h("audio", { class: "media__audio", src: post.media_url, controls: true, preload: "none" }));
   }
-  return h("div", { class: "textpost" }, post.caption || "");
+  const t = post.caption || "";
+  return h("div", { class: `textpost${t.length > 260 ? " textpost--long" : t.length > 120 ? " textpost--mid" : ""}` },
+    h("p", { class: "textpost__text" }, t));
 }
 
 function captionNode(post, clamp) {
@@ -92,12 +107,13 @@ function loadPressed(id) {
   return new Set(all);
 }
 
-// rail: the vertical action column on top of a feed card (emoji above the count, comments last)
-export function reactionBar(post, { showComments = true, rail = false } = {}) {
+// The action rail: one button per reaction (pressed state per browser), comments, share.
+// rail: the vertical column on a feed slide (emoji above the count); else a row (post page).
+export function reactionBar(post, { showComments = true, rail = false, share = true } = {}) {
   const pressed = loadPressed(post.id);
-  const bar = h("div", { class: rail ? "reacts reacts--rail" : "reacts" });
+  const bar = h("div", { class: rail ? "reacts reacts--rail" : "reacts", role: "group", "aria-label": "Aktionen" });
   for (const r of state.meta?.reactions || []) {
-    const count = h("span", {}, compact(post.reactions?.[r.key] || 0));
+    const count = h("span", { class: "react__n" }, compact(post.reactions?.[r.key] || 0));
     const btn = h("button", {
       class: `react react--${r.key}`, type: "button", "aria-pressed": String(pressed.has(r.key)),
       "aria-label": `${r.label}: ${num(post.reactions?.[r.key] || 0)}`, title: r.label,
@@ -108,6 +124,7 @@ export function reactionBar(post, { showComments = true, rail = false } = {}) {
       store(pressedKey(post.id), [...pressed]);
       btn.setAttribute("aria-pressed", "true");
       btn.classList.remove("bump"); void btn.offsetWidth; btn.classList.add("bump");
+      post.reactions = post.reactions || {};
       post.reactions[r.key] = (post.reactions[r.key] || 0) + 1;
       count.textContent = compact(post.reactions[r.key]);
       try {
@@ -118,9 +135,17 @@ export function reactionBar(post, { showComments = true, rail = false } = {}) {
     });
     bar.append(btn);
   }
+  const n = post.comment_count || 0;
   if (showComments) {
-    bar.append(h("a", { class: "reacts__comments", href: `#/p/${post.id}`, "aria-label": `${post.comment_count} Kommentare` },
-      icons.comment(), rail ? h("span", {}, compact(post.comment_count || 0)) : num(post.comment_count)));
+    bar.append(h("a", { class: "react react--comments", href: `#/p/${encodeURIComponent(post.id)}`,
+      "aria-label": `${num(n)} ${n === 1 ? "Kommentar" : "Kommentare"} – Post öffnen` },
+    h("span", { class: "react__e", "aria-hidden": "true" }, icons.comment()), h("span", { class: "react__n" }, compact(n))));
+  }
+  if (share) {
+    bar.append(h("button", {
+      class: "react react--share", type: "button", "aria-label": "Teilen oder Link kopieren", title: "Teilen",
+      onclick: () => sharePost(post.id, post.account?.display_name),
+    }, h("span", { class: "react__e", "aria-hidden": "true" }, icons.share()), h("span", { class: "react__n" }, "Teilen")));
   }
   return bar;
 }
@@ -136,6 +161,11 @@ export function genBadge(post, { withMissing = false } = {}) {
   if (g?.public_id) {
     const badge = h("a", { class: "gen-badge", href: `#/g/${encodeURIComponent(g.public_id)}` },
       `Erstellt mit ${typeof g.model_label === "string" && g.model_label ? g.model_label : "einem unbenannten Modell"}`);
+    return g.start_source_sim === true ? h("span", { class: "gen-line" }, badge, simNote(true)) : badge;
+  }
+  // curated preview feed: a model label without a public summary -> the same line, not a link
+  if (typeof g?.model_label === "string" && g.model_label) {
+    const badge = h("span", { class: "gen-badge" }, `Erstellt mit ${g.model_label}`);
     return g.start_source_sim === true ? h("span", { class: "gen-line" }, badge, simNote(true)) : badge;
   }
   return withMissing ? h("span", { class: "gen-badge gen-badge--none" }, "Keine Generierungsdetails verfügbar") : null;
@@ -172,43 +202,33 @@ export function siteFooter() {
   return h("footer", { class: "site-foot" }, h("p", {}, disclaimer()));
 }
 
-export function postHead(post) {
+export function postHead(post, { size = 40 } = {}) {
   return h("div", { class: "post__head" },
-    avatar(post.account, 40),
+    avatar(post.account, size),
     h("div", { class: "post__who" },
       h("a", { class: "post__name", href: `#/u/${encodeURIComponent(post.account.slug)}` }, post.account.display_name),
       h("div", { class: "post__meta" }, earTag(post.account), h("time", { class: "post__time", datetime: post.posted_at }, when(post.posted_at)))));
 }
 
-// Feed card. Visual posts: one 9:16 frame with author, caption and badge on a soft shade at the
-// bottom and the reactions as a column on the right (short-video feed). Text posts: a quote card.
+// Feed slide: one post per screen. Video, image or the text itself fills the frame; author, caption,
+// generation badge + credits and the robot disclaimer sit on a gradient at the bottom, the action
+// rail on the right (short-video feed).
 export function postCard(post) {
-  const n = post.comment_count || 0;
-  const href = `#/p/${post.id}`;
+  const href = `#/p/${encodeURIComponent(post.id)}`;
   const label = `Post von ${post.account.display_name}`;
-  if (post.kind === "text" || !post.media_kind) {
-    return h("article", { class: "post post--text", "data-post-id": String(post.id), "aria-label": label },
-      postHead(post),
-      media(post),
-      reactionBar(post, { showComments: false }),
-      post.hashtags ? captionNode(post, false) : null,
-      genBadge(post),
-      genCredits(post.generation?.credits),
-      robotNote(post),
-      h("a", { class: "post__more", href }, n ? [icons.comment(), plural(n, "Kommentar", "Kommentare")] : "Zum Post"));
-  }
-  const cap = post.caption || post.hashtags
+  const text = post.kind === "text" || !post.media_kind;
+  const cap = !text && (post.caption || post.hashtags)
     ? h("a", { class: "post__caption", href, "aria-label": `${label} öffnen` }, captionNode(post, true))
-    : null;
-  return h("article", { class: "post", "data-post-id": String(post.id), "aria-label": label },
+    : text && post.hashtags ? captionNode(post, false) : null;
+  return h("article", { class: `post slide${text ? " post--text" : ""}`, "data-post-id": String(post.id), "aria-label": label },
     h("div", { class: "post__frame" },
       media(post),
-      post.media_kind === "image" ? h("a", { class: "post__open", href, "aria-label": `${label} öffnen` }) : null,
+      post.media_kind !== "video" ? h("a", { class: "post__open", href, "aria-label": `${label} öffnen`, tabindex: "-1" }) : null,
       h("div", { class: "post__overlay" },
         postHead(post),
         cap,
         genBadge(post),
-        genCredits(post.generation?.credits)),
-      reactionBar(post, { showComments: true, rail: true })),
-    robotNote(post));
+        genCredits(post.generation?.credits),
+        robotNote(post)),
+      reactionBar(post, { showComments: true, rail: true })));
 }
