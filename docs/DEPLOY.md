@@ -12,6 +12,11 @@ variables in the environment:
 |---|---|
 | `HENHOUSE_SERVICE_URL` | base URL of the generation service (`scheme://host:port`, without `/api/v1`) |
 | `HENHOUSE_SERVICE_KEY` | bearer key with scope `publish` (read-only). Never printed or logged |
+| `HENHOUSE_CHARACTERS_DIR` | optional: the private character identities (`<slug>/identity.md`, read-only), used to create accounts of characters that were never seeded. Default: `<HENHOUSE_FEED_DIR>/../characters` when `HENHOUSE_FEED_DIR` is set; unset: no accounts are created |
+
+`weide` reads these from the environment first, then from `.env` in the private dir. The deploy unit
+also loads that same file (`EnvironmentFile=`), so a line there is all the timer needs, e.g.
+`HENHOUSE_CHARACTERS_DIR=~/develop/henhouse-stories/characters` (`~` is expanded by `weide`).
 
 ## Pull approved generations
 
@@ -23,12 +28,19 @@ uv run weide pull-approved --full      # ignore the cursor, reconcile every publ
 
 The owner approves generations for publishing in the service (Lab UI or `publish-approval`, see the
 service's docs/API.md "Publishing"); `pull-approved` reads `GET /api/v1/publications` with the
-`publish`-scoped key and turns each publication into a published post of an existing character account
-(it never creates accounts; run `seed-characters` first). `video/mp4` becomes a reel, `image/png`,
+`publish`-scoped key and turns each publication into a published post of a character account
+(`seed-characters` creates the committed ones). When a publication names a character the database does
+not know and `HENHOUSE_CHARACTERS_DIR` is set, the account is created first from that character's
+`identity.md` front matter, allowlisted fields only: slug (the directory name), `name` (display name),
+`handle` (must be free), `kind` (animal, human, robot, other; `thing` maps to other) and `bio` (capped at
+150 characters). The markdown body is never read, the `avatar` id never copied, existing accounts are
+never changed, and the new account stays unlisted until its first post is published. Without the dir or
+a usable identity the item fails (and is retried next run). `video/mp4` becomes a reel, `image/png`,
 `image/jpeg` and `image/webp` an image post. Posts are matched by `generation:<public_id>` (the service
 exposes no run id), so reruns are idempotent: an unchanged item is skipped, a new caption, character or
 summary updates the post (it keeps its first post time). Media land in `media/gen/<public_id>.<ext>`
-(the list's sha256 is verified), posters in `thumb/540/gen/<public_id>.jpg` (the service poster, scaled
+(the list's sha256 is verified; a file over 95 MB fails the item, since GitHub refuses files over
+100 MB in the committed site), posters in `thumb/540/gen/<public_id>.jpg` (the service poster, scaled
 with ffmpeg; else a frame of the media via ffmpeg; without ffmpeg only a JPEG service poster is kept).
 
 Cursor: the service documents `revoked` as every withdrawal after `since`, so polling with `since` is
@@ -52,8 +64,9 @@ reported as notes. A malformed item only fails itself; the others are still proc
 
 The service's summary is sanitized again before it is stored. Inputs are kept only when the summary
 marks them `published` (a reference to that publication's own post, shown once that post is published
-here); every other input is shown as "privater Input". Input media are not downloaded. A failing item
-leaves no post and no file behind; the command then exits non-zero.
+here); every other input is shown as "privater Input". Input media are not downloaded. Credits that
+still name internal details after sanitizing (run ids, take labels, file names, paths) make the item
+fail (it is retried; the message gives the count, never the text). A failing item leaves no post and no file behind; the command then exits non-zero.
 
 Only `app/weide/publish.py` (`ServiceClient`, `Publication`) knows the API shape.
 
@@ -73,9 +86,19 @@ failed full pull is retried on the next run. The JSON reports `pull.full`.
 `scripts/auto-deploy.sh --dry-run` runs `pull-approved --dry-run --auto-full` (same decision, writes
 nothing).
 
+`scripts/auto-deploy.sh` never wedges on its own leftovers: `site/` is rebuilt from the database on
+every run, so the script restores it to `HEAD` (`git checkout HEAD -- site`, `git clean -fd -- site`;
+nothing outside `site/` is touched) at the start of each run and after a failed `weide deploy`. The
+media `pull-approved` writes into the repository root (`/media/gen/`, `/thumb/*/gen/`) are gitignored
+(anchored, so `site/media/gen/` stays committable) and not counted as local changes. Any other local
+change (tracked or untracked) still stops the run.
+
 The command prints JSON. `"changed": false` means `site/` is byte-identical to before, so automation
-can skip the commit. `errors` (pull failures, leak check hits) make it exit non-zero; then do not
-commit `site/`. Nothing is committed or pushed by the command. The exported "today" (ranking pages)
+can skip the commit. `errors` (the publication listing could not be read, leak check hits) make it
+exit non-zero; then do not commit `site/`. A single failed item (unknown character, bad media, leaky
+credit, ...) is only a `warning`: its public_id is listed in `failed_items`, every other publication and
+revocation is exported, and since the pull keeps its cursor (and does not record a full pull) the item
+is retried on the next run. Nothing is committed or pushed by the command. The exported "today" (ranking pages)
 is the date of the newest published post unless `--today` is given, so the same data exports to the
 same files on any day. The export holds no build timestamps, so a full pull that changes nothing leaves
 `site/` byte-identical and the automation commits nothing.

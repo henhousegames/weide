@@ -160,10 +160,12 @@ def test_failed_full_pull_does_not_advance_timestamp(env, tmp_path):
     assert _deploy(env, site)["errors"] == []
     _age(con, timedelta(days=2))
     stamp = _last_full(con)
-    # one item fails (unknown character): the run fails, the timestamp stays, the next run is full again
+    # one item fails (unknown character): a warning, the rest is exported, the timestamp stays, the next run
+    # is full again
     svc.pubs.append(publication(PID2, character="nobody", approved_at="2026-11-18T09:00:00+00:00"))
     bad = _deploy(env, site)
-    assert bad["pull"]["full"] is True and bad["errors"] and bad["changed"] is False
+    assert bad["pull"]["full"] is True and bad["errors"] == [] and bad["changed"] is False
+    assert bad["failed_items"] == [PID2] and len(bad["warnings"]) == 1 and bad["export"]["generations"] == 1
     assert _last_full(con) == stamp and full_pull_due(con)
     # the listing itself fails
     svc.pubs.pop()

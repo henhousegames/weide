@@ -138,7 +138,7 @@ def test_publish_and_idempotent(env):
     [p] = posts(con)
     assert p["status"] == "published" and p["public_id"] == PID and p["source"] == f"generation:{PID}"
     assert p["kind"] == "reel" and p["media"] == f"gen/{PID}.mp4" and p["caption"] == "Rasenmäher-Test"
-    assert p["posted_at"] == "2026-11-17T17:00:00+00:00"
+    assert p["posted_at"] == "2026-11-17T18:00:00+01:00"            # Europe/Berlin, same instant
     assert (media / f"gen/{PID}.mp4").read_bytes() == MP4
     assert not [f for f in (media / "gen").iterdir() if f.name.startswith(".")]      # temp dir cleaned
     gen = json.loads(p["generation_json"])
@@ -161,7 +161,7 @@ def test_caption_update_keeps_post_time(env):
     res = run(con, svc)
     assert (res["new"], res["updated"], res["incremental"]) == (0, 1, True)
     [p] = posts(con)
-    assert p["caption"] == "Neue Caption" and p["posted_at"] == "2026-11-17T17:00:00+00:00"
+    assert p["caption"] == "Neue Caption" and p["posted_at"] == "2026-11-17T18:00:00+01:00"
 
 
 def test_dry_run_writes_nothing(env):
@@ -364,10 +364,37 @@ def test_export_and_deploy_have_no_source_or_key(base_db, tmp_path, monkeypatch)
     again = deploy(site, dbp, **kw)
     assert again["errors"] == [] and again["changed"] is False and again["pull"]["new"] == 0
     assert deploy(site, dbp, full=True, **kw)["pull"]["unchanged"] == 1
-    # a failing pull stops before the export
+    # a failing item is a warning: the rest is still exported
     svc.pubs[0] = publication(caption="geändert", character="nobody", approved_at="2026-11-18T10:00:00+00:00")
     bad = deploy(site, dbp, **kw)
-    assert bad["errors"] and bad["export"] is None and bad["changed"] is False
+    assert bad["errors"] == [] and bad["warnings"] and bad["failed_items"] == [PID] and bad["export"] is not None
+    # a failing listing stops before the export
+    down = deploy(site, dbp, **{**kw, "transport": httpx.MockTransport(lambda r: httpx.Response(503))})
+    assert down["errors"] and down["pull"]["listing_failed"] and down["export"] is None and down["changed"] is False
+
+
+def test_one_bad_item_does_not_block_publishes_and_revocations(env, tmp_path):
+    con, svc, media, _, dbp = env
+    site = tmp_path / "site"
+    kw = dict(settings=ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc), today="2026-11-17")
+    assert deploy(site, dbp, **kw)["errors"] == []
+    cursor = db.get_meta(con, "publications_since")
+    svc.pubs.append(publication("pub_BAD01", character="nobody", approved_at="2026-11-18T09:00:00+00:00"))
+    svc.pubs.append(publication("pub_GOOD1", approved_at="2026-11-18T10:00:00+00:00"))
+    svc.revoked.append({"public_id": PID, "revoked_at": "2026-11-18T11:00:00+00:00"})
+    svc.pubs = [p for p in svc.pubs if p["public_id"] != PID]
+    res = deploy(site, dbp, **kw)
+    assert res["errors"] == [] and res["failed_items"] == ["pub_BAD01"]
+    assert res["pull"]["new"] == 1 and res["pull"]["revoked"] == 1 and res["changed"]
+    assert (site / "data/gen/pub_GOOD1.json").is_file() and not (site / f"data/gen/{PID}.json").exists()
+    assert not (site / "data/gen/pub_BAD01.json").exists()
+    assert db.get_meta(con, "publications_since") == cursor             # the bad item is fetched again
+    db.upsert_account(con, "nobody", kind="animal", handle="@nobody", display_name="Nobody")
+    con.commit()
+    res = deploy(site, dbp, **kw)
+    assert res["errors"] == [] and res["failed_items"] == [] and res["pull"]["new"] == 1
+    assert (site / "data/gen/pub_BAD01.json").is_file()
+    assert db.get_meta(con, "publications_since") == "2026-11-18T11:00:00+00:00"
 
 
 def test_export_of_published_generation_post(env, tmp_path):
@@ -587,3 +614,44 @@ def test_start_source_flag_is_dropped_when_field_goes_away(env):
     svc.pubs = [{**publication(), "approved_at": "2026-11-18T17:00:00+00:00"}]
     assert run(con, svc, full=True)["updated"] == 1
     assert "start_source_sim" not in _record(con)
+
+
+def test_media_over_the_size_limit_fails_alone(env, monkeypatch):
+    import weide.publish as pub
+    assert pub.MAX_MEDIA_BYTES < 100 * 1000 * 1000                 # GitHub refuses files over 100 MB
+    con, svc, media, *_ = env
+    big = MP4 + b"\x00" * 400
+    svc.pubs = [publication("pub_BIG01", content=big), publication("pub_SMALL1", approved_at="2026-11-18T10:00:00Z")]
+    svc.media["pub_BIG01"] = big
+    monkeypatch.setattr(pub, "MAX_MEDIA_BYTES", len(MP4) + 100)
+    res = run(con, svc)
+    assert res["new"] == 1 and res["failed_ids"] == ["pub_BIG01"] and "byte limit" in res["failed"][0]
+    assert not (media / "gen/pub_BIG01.mp4").exists() and (media / "gen/pub_SMALL1.mp4").is_file()
+    # without a Content-Length the stream is cut off at the limit as well
+    real = svc.__call__
+    svc_nolen = lambda req: (lambda r: httpx.Response(r.status_code, content=iter([r.content])))(real(req)) \
+        if req.url.path.endswith("/media/output") else real(req)
+    res = pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc_nolen))
+    assert res["failed_ids"] == ["pub_BIG01"] and "byte limit" in res["failed"][0]
+
+
+def test_posted_at_uses_the_berlin_day(env, tmp_path, monkeypatch):
+    """Approved 23:30 UTC = 00:30 the next day in Berlin: the post belongs to the Berlin day (today, top lists)."""
+    con, svc, *_ = env
+    monkeypatch.setattr(config, "TODAY_OVERRIDE", None)
+    svc.pubs = [publication("pub_LATE01", approved_at="2026-11-21T23:30:00Z")]
+    assert run(con, svc)["new"] == 1
+    [p] = posts(con)
+    assert p["posted_at"] == "2026-11-22T00:30:00+01:00"
+    con.commit()
+    out = export_static(tmp_path / "site", env[4])
+    assert out["today"] == "2026-11-22" and out["leaks"] == []
+    day = json.loads((tmp_path / "site/data/top/day-2026-11-22.json").read_text())
+    assert [i["generation"]["public_id"] for i in day["items"] if i.get("generation")] == ["pub_LATE01"]
+    assert not (tmp_path / "site/data/top/day-2026-11-21.json").exists()
+    # a post stored earlier with the UTC stamp is normalised by the next full pull (same instant)
+    con.execute("UPDATE posts SET posted_at='2026-11-21T23:30:00+00:00'")
+    con.commit()
+    res = run(con, svc, full=True)
+    assert res["updated"] == 1 and posts(con)[0]["posted_at"] == "2026-11-22T00:30:00+01:00"
+    assert run(con, svc, full=True)["unchanged"] == 1

@@ -176,6 +176,37 @@ def test_leak_check_finds_planted_leaks(tmp_path):
         assert s in hits, s
 
 
+@pytest.mark.parametrize("caption", [
+    "Hockey am Teich", "Token-Ring und Monkey-Business", "Keyboard-Solo", "/me ist müde", "/r/aww hat gefragt",
+    "AC/DC auf der Weide", "24/7 Rasenpflege", "Passwort: Fisch", "https://example.org/home/x"])
+def test_leak_check_passes_harmless_values(tmp_path, caption):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/feed.json").write_text(json.dumps({"items": [{"caption": caption, "title": caption}]}))
+    assert leak_check(tmp_path) == []
+
+
+@pytest.mark.parametrize("caption,kind", [
+    ("/home/EXAMPLE/x.mp4", "absolute path"), ("liegt in /tmp/EXAMPLE/x", "absolute path"),
+    ("~/EXAMPLE/x", "absolute path"), ("/Users/EXAMPLE", "absolute path"), ("/var/EXAMPLE/x", "absolute path"),
+    ("/mnt/EXAMPLE/x", "absolute path"), ("C:\\EXAMPLE\\x", "absolute path"), ("file:///EXAMPLE", "absolute path"),
+    ("api_token=EXAMPLE_TOKEN", "secret-like"), ("password = EXAMPLE", "secret-like"),
+    ("key vsk_EXAMPLE0000000000", "secret-like"), ("sk-EXAMPLE0000000000000", "secret-like"),
+    ("ghp_EXAMPLE00000000000000", "secret-like"), ("Authorization: Bearer EXAMPLE", "secret-like")])
+def test_leak_check_finds_real_paths_and_secrets(tmp_path, caption, kind):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/feed.json").write_text(json.dumps({"items": [{"caption": caption}]}))
+    hits = leak_check(tmp_path)
+    assert len(hits) == 1 and kind in hits[0], hits
+
+
+def test_leak_check_key_names_and_configured_secret(tmp_path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/feed.json").write_text(json.dumps({"items": [{"api_key": "x", "caption": "EXAMPLEsecretvalue1"}]}))
+    hits = leak_check(tmp_path, ("EXAMPLEsecretvalue1",))
+    assert any("private key 'api_key'" in h for h in hits) and any("configured secret" in h for h in hits)
+    assert not any("EXAMPLEsecretvalue1" in h for h in hits if "configured" in h)
+
+
 def test_cli_export_static(exported, tmp_path, capsys):
     _, _, base_db = exported
     main(["export-static", str(tmp_path / "o"), "--db", str(base_db), "--today", "2026-11-17", "--link"])

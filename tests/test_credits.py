@@ -91,17 +91,27 @@ INTERNAL_TEXTS = [
     "(own generation (same terms as the source take))",
     "Musik: example-pack (example_sfx-pack.zip) :: Audio/doorCreak.ogg - Example Studio (example.org) (CC0-1.0)",
     "Sound: run gen_deadbeef01",
-    "Sound: take h123",
+    "Sound: take h123 b2 t1",
+    "Sound: (H004 B4 T1)",
     "Sound: pack :: clip",
     "Sound: thunder.WAV (CC0)",
     "Sound: weights model.safetensors",
     "Sound: Audio/clip",
     "Sound: from sfx/archive",
+    "Sound: outputs/EXAMPLE",
+    "Sound: clip.flac",
 ]
+# paths the sanitizer already reduces to a base name; credit_internal still flags the raw text
+RAW_INTERNAL_TEXTS = ["Sound: /tmp/EXAMPLE/clip", "Sound: ~/EXAMPLE/clip", "Sound: C:\\EXAMPLE\\clip"]
 PUBLIC_TEXTS = [NOTICE, CC0_TEXT,
                 "SoundCTM by Example Lab, CC BY 4.0",
                 "Musik: Example Artist - Example Song (CC BY 4.0), 0.00-1.15 s",
-                "Ton: eigene Generation (Stable Audio 3 Small SFX)"]
+                "Ton: eigene Generation (Stable Audio 3 Small SFX)",
+                "Musik: AC/DC - Example Song",                       # a slash alone is no path
+                "Sound: freesound.org/s/4711 by example (CC0)",
+                "Sound: freesound.org/people/example/sounds/4711 (CC0)",
+                "Musik: 24/7 Example Radio",
+                "Sound: Example h123 Remix"]                         # no take label shape
 
 
 def test_internal_credit_details_fail_the_leak_check():
@@ -113,6 +123,8 @@ def test_internal_credit_details_fail_the_leak_check():
         assert len(hits) == 1 and "pub_X" in hits[0] and t not in hits[0], t
         assert "gen_" not in hits[0] and "::" not in hits[0]
     assert credit_internal({"text": "Powered by Example", "model": "ckpt/model-v2"})          # model counts too
+    for t in RAW_INTERNAL_TEXTS:
+        assert credit_internal({"text": t}), t
     for t in PUBLIC_TEXTS:
         c = {"kind": "license_notice", "text": t,
              "license": {"id": "CC-BY-4.0", "url": "https://creativecommons.org/licenses/by/4.0/"}}
@@ -250,9 +262,9 @@ def test_card_summary_and_export_carry_credits(published, tmp_path):
     assert any("credits" in h for h in leak_check(out))
 
 
-def test_export_refuses_internal_credits_but_ingest_keeps_them(tmp_path, monkeypatch):
-    """Ingest does not filter (the private preview shows the raw text); the export leak check aborts and
-    names the post's public_id, not the credit text."""
+def test_pull_refuses_internal_credits_and_export_still_checks(tmp_path, monkeypatch):
+    """A publication whose credits name internal details fails alone at pull time (retried, the message
+    names no credit text); the good one is published. The export leak check stays a second net."""
     internal = {"kind": "audio_source", "text": INTERNAL_TEXTS[1],
                 "license": {"id": "CC0-1.0", "url": "https://creativecommons.org/publicdomain/zero/1.0/"}}
     dbp = tmp_path / "h.db"
@@ -263,13 +275,23 @@ def test_export_refuses_internal_credits_but_ingest_keeps_them(tmp_path, monkeyp
     monkeypatch.setattr(config, "THUMB_ROOT", tmp_path / "thumb")
     svc = Service()
     svc.summaries[WITH]["credits"] = [WANT[0], internal]
-    pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc), log=lambda _: None)
-    assert gen_json(con, WITH)["credits"] == [WANT[0], internal]                     # stored raw (private)
+    res = pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc), log=lambda _: None)
+    assert res["failed_ids"] == [WITH] and "internal details" in res["failed"][0]
+    assert not any("example_sfx" in f or "::" in f or "doorCreak" in f for f in res["failed"])
+    assert con.execute("SELECT COUNT(*) FROM posts WHERE public_id=?", (WITH,)).fetchone()[0] == 0
+    assert gen_json(con, EMPTY)["credits"] == []                                     # the others went through
+    assert db.get_meta(con, "publications_since") is None                            # retried next run
+    # second net: a record that got in some other way still fails the export, naming only the public_id
+    row = con.execute("SELECT id, generation_json FROM posts WHERE public_id=?", (EMPTY,)).fetchone()
+    gen = json.loads(row["generation_json"])
+    gen["credits"] = [WANT[0], internal]
+    con.execute("UPDATE posts SET generation_json=? WHERE id=?", (json.dumps(gen), row["id"]))
+    con.commit()
     con.close()
     stats = export_static(tmp_path / "site", dbp)
     hits = stats["leaks"]
-    assert hits and all(WITH in h for h in hits)
-    assert {h.split(":")[0] for h in hits} >= {"data/feed.json", f"data/gen/{WITH}.json"}
+    assert hits and all(EMPTY in h for h in hits)
+    assert {h.split(":")[0] for h in hits} >= {"data/feed.json", f"data/gen/{EMPTY}.json"}
     assert not any("example_sfx" in h or "::" in h or "doorCreak" in h for h in hits)
 
 

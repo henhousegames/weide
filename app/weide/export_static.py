@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .generation import PUBLIC_ID, credits_leaks, summary_leaks
+from .db import parse_time
+from .generation import _TOKEN, PUBLIC_ID, credits_leaks, summary_leaks
 from .media import MediaError, avatar_file, media_file, thumb_file
 
 URL = re.compile(r"^/(media|thumb/(\d+)|avatar)/(.+)$")
@@ -125,8 +126,15 @@ def render_index(static: bool = True) -> str:
 
 # --- leak check ----------------------------------------------------------------------------------
 
-ABS_PATH = re.compile(r"(^/|/home/|/Users/|^[A-Za-z]:[\\/]|file://|\\\\)")
+# Key names: a secret-like word anywhere is suspicious. Values: only actual paths and secrets count, so a
+# caption like "Hockey" or "Token-Ring" or one that starts with "/" passes.
 SECRET_WORD = re.compile(r"key|token|secret|password", re.I)
+_ROOT_DIRS = r"home|tmp|Users|var|mnt|root|etc|opt|srv|run|private|Volumes|data|workspace"
+ABS_PATH = re.compile(r"(?<![\w.:/-])/(?:" + _ROOT_DIRS + r")/|(?<![\w.:/-])~/|^[A-Za-z]:/|(?<!\w)[A-Za-z]:\\"
+                      r"|file://|\\\\[\w.-]+\\")
+_SECRET_NAME = r"(?:api[_-]?key|access[_-]?key|token|secret|password|passwd)"
+SECRET_VALUE = re.compile(_TOKEN.pattern + r"|\bvsk_[A-Za-z0-9_-]{8,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+                          r"|" + _SECRET_NAME + r"\s*=\s*\S+|" + _SECRET_NAME + r":\s*\S{12,}", re.I)
 PRIVATE_KEYS = DROP_KEYS | {"style_guidance", "key_hash", "permissions", "generation_json", "profile_json",
                             "identity", "reference_assets", "voice", "controller_id"}
 ALLOWED_KEYS = {"key"}          # reactions[].key, window.key
@@ -149,20 +157,25 @@ def _scan(obj: Any, where: str, hits: list[str], parent: str | None = None) -> N
     elif isinstance(obj, str):
         if ABS_PATH.search(obj):
             hits.append(f"{where}: absolute path {obj[:80]!r}")
-        if SECRET_WORD.search(obj):
+        if SECRET_VALUE.search(obj):
             hits.append(f"{where}: secret-like value {obj[:80]!r}")
         if obj.startswith("generation:"):
             hits.append(f"{where}: generation run id {obj[:80]!r}")
 
 
-def leak_check(out: Path) -> list[str]:
-    """Scan an export: JSON values with absolute paths, secret-like words, generation run ids or private
-    fields; text files with home directories. Returns human-readable hits (empty = clean)."""
+def leak_check(out: Path, secrets: tuple[str, ...] = ()) -> list[str]:
+    """Scan an export: JSON values with absolute paths, secret-looking values (tokens, keys), generation run
+    ids or private fields (key names with secret-like words); text files with home directories; every file
+    for the literal `secrets` (e.g. the service key; never echoed). Returns human-readable hits (empty = clean)."""
     out = Path(out)
     hits: list[str] = []
+    secrets = tuple(x for x in secrets if x and len(x) >= 8)
     for f in sorted((out / "data").rglob("*.json")):
         rel = f.relative_to(out)
-        data = json.loads(f.read_text(encoding="utf-8"))
+        raw = f.read_text(encoding="utf-8")
+        if any(x in raw for x in secrets):
+            hits.append(f"{rel}: contains a configured secret")
+        data = json.loads(raw)
         if rel.parts[:2] == ("data", "gen"):
             summary_leaks(data, str(rel), hits, post=f.stem)        # prompts/settings are public here, paths etc. not
         else:
@@ -170,6 +183,8 @@ def leak_check(out: Path) -> list[str]:
     for f in [out / "index.html", *sorted((out / "static").rglob("*"))]:
         if f.is_file() and f.suffix in (".html", ".js", ".css"):
             text = f.read_text(encoding="utf-8")
+            if any(x in text for x in secrets):
+                hits.append(f"{f.relative_to(out)}: contains a configured secret")
             for pat in ("/home/", "/Users/", "generation:"):
                 if pat in text:
                     hits.append(f"{f.relative_to(out)}: contains {pat!r}")
@@ -185,13 +200,17 @@ def newest_post_day(db_file: Path) -> str | None:
         return None
     con = sqlite3.connect(str(db_file))
     try:
-        row = con.execute("SELECT substr(posted_at, 1, 10) FROM posts WHERE status='published' "
-                          "ORDER BY ts DESC LIMIT 1").fetchone()
+        row = con.execute("SELECT posted_at FROM posts WHERE status='published' ORDER BY ts DESC LIMIT 1").fetchone()
     except sqlite3.OperationalError:
         return None
     finally:
         con.close()
-    return row[0] if row else None
+    return world_day(row[0]) if row else None
+
+
+def world_day(posted_at: str) -> str:
+    """The Europe/Berlin date of a post time (the ranking windows use the same zone)."""
+    return parse_time(posted_at).astimezone(config.TZ).date().isoformat()
 
 
 def _prune(out: Path, keep: set[str]) -> list[str]:
@@ -211,7 +230,7 @@ def _prune(out: Path, keep: set[str]) -> list[str]:
 
 
 def export_static(out: Path, db_path: str | Path | None = None, *, today: str | None = None,
-                  link: bool = False) -> dict:
+                  link: bool = False, secrets: tuple[str, ...] = ()) -> dict:
     from fastapi.testclient import TestClient
 
     from .server import create_app
@@ -233,7 +252,7 @@ def export_static(out: Path, db_path: str | Path | None = None, *, today: str | 
             con.close()
     finally:
         config.TODAY_OVERRIDE = saved_today
-    stats["leaks"] = leak_check(out)
+    stats["leaks"] = leak_check(out, secrets)
     return stats
 
 
@@ -277,7 +296,7 @@ def _export(out: Path, client: Any, con: sqlite3.Connection, link: bool) -> dict
         _write(out / f"data/accounts/{a['slug']}.json", _clean(get(f"/api/accounts/{a['slug']}"), files))
         stats["accounts"] += 1
 
-    days = {r[0] for r in con.execute("SELECT DISTINCT substr(posted_at, 1, 10) FROM posts WHERE status='published'")}
+    days = {world_day(r[0]) for r in con.execute("SELECT DISTINCT posted_at FROM posts WHERE status='published'")}
     days.add(meta["today"])
     weeks = {meta["week"]}
     for d in days:

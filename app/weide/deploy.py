@@ -1,8 +1,10 @@
 """`weide deploy`: pull approved generations, export the static site, leak-check it, report changes.
 
 Purely local: nothing is committed or pushed. The result says whether the site directory changed, so
-automation can skip no-op deploys (`"changed": false`). A pull failure stops before the export; a leak
-check hit is an error (the files are written, but must not be committed).
+automation can skip no-op deploys (`"changed": false`). A failed listing (the service is unreachable or
+answers garbage) stops before the export. Failed single items are `warnings` (`failed_items` lists their
+public_ids): everything else is exported, and the pull keeps its cursor, so they are retried next run.
+A leak check hit is an error (the files are written, but must not be committed).
 
 Daily full pull: the pull is incremental (cursor), except once per FULL_PULL_INTERVAL: when the DB meta
 `last_full_pull_at` (written by pull_approved after a fully successful full listing) is missing, unreadable
@@ -70,7 +72,8 @@ def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, 
     from .publish import ServiceSettings, pull_approved
 
     site = Path(site)
-    res: dict = {"site": site.name, "pull": None, "export": None, "errors": [], "changed": False}
+    res: dict = {"site": site.name, "pull": None, "export": None, "errors": [], "warnings": [], "failed_items": [],
+                 "changed": False}
     before = snapshot(site)
     if pull:
         settings = settings or ServiceSettings.load()
@@ -81,10 +84,17 @@ def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, 
             res["pull"] = pull_approved(con, settings, full=full, transport=transport, log=log)
         finally:
             con.close()
-        if res["pull"]["failed"]:
+        if res["pull"].get("listing_failed"):
             res["errors"] += [f"pull: {m}" for m in res["pull"]["failed"]]
             return res
-    exp = export_static(site, db_path, today=today)
+        if res["pull"]["failed"]:
+            # one bad item must not block every other publication and revocation: export the rest; the
+            # pull keeps its cursor (and the full-pull time), so the failed items are retried next run
+            res["warnings"] += [f"pull: {m}" for m in res["pull"]["failed"]]
+            res["failed_items"] = list(res["pull"].get("failed_ids") or [])
+            log(f"pull: {len(res['pull']['failed'])} item(s) failed, exporting the rest; failed public_ids: "
+                + (", ".join(res["failed_items"]) or "-"))
+    exp = export_static(site, db_path, today=today, secrets=(settings.key,) if settings is not None else ())
     res["export"] = {k: exp[k] for k in ("posts", "accounts", "generations", "files", "bytes", "today")}
     res["export"]["missing"] = len(exp["missing"])
     if exp["leaks"]:

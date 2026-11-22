@@ -32,12 +32,17 @@ origin (media URLs on another host get no key) and is never printed: every error
 `_redact`. Settings come from the environment or from a gitignored `.env` in the private dir:
   HENHOUSE_SERVICE_URL   base URL of the service (scheme://host:port; a trailing /api/v1 is fine too)
   HENHOUSE_SERVICE_KEY   bearer key (scope `publish`)
+  HENHOUSE_CHARACTERS_DIR  optional: character identities (<slug>/identity.md, read-only). Default:
+                         <HENHOUSE_FEED_DIR>/../characters when HENHOUSE_FEED_DIR is set (as in the preview)
 
 Each publication becomes one post (status published: approval happened in the service) matched by
 source `generation:<public_id>` (the API exposes no run id, and the internal run id never reaches us),
 so a rerun never duplicates; caption/character/summary changes update it (keeping the first posted_at).
-`video/mp4` becomes a `reel`, `image/png|jpeg|webp` an `image` post. The character account must already
-exist. Media go to <media root>/gen/<public_id>.<ext> (sha256 from the list verified), a 540 px poster to
+`video/mp4` becomes a `reel`, `image/png|jpeg|webp` an `image` post. The character account must exist;
+with a characters dir configured, a missing one is created first from its identity.md front matter
+(characters.account_from_identity: allowlisted fields only, never the body or the avatar, existing
+accounts untouched, not listed until its first post is published). Without it, or without a usable
+identity, the item fails (and is retried). Media go to <media root>/gen/<public_id>.<ext> (sha256 from the list verified), a 540 px poster to
 <thumb root>/540/gen/<public_id>.jpg: the service poster (scaled with ffmpeg, or kept as is when it is a
 JPEG and ffmpeg is missing), else a frame of the media (ffmpeg; skipped without it).
 Start source: when the summary's whitelisted field `start_source` is "isaac-sim" (top level, already inherited
@@ -52,7 +57,9 @@ item leaves no post and no file behind and does not stop the others.
 
 Credits: the summary's `credits` list (else the list item's) is kept in generation_json as `credits`
 (generation.sanitize_credits: kind/text/model/license{id,url}, strings only, http(s) URL only; [] when
-missing). A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
+missing). An item whose sanitized credits still name internal details (generation.credit_internal: run
+ids, take labels, file names, paths) is refused as a failed item (retried next run; the message names
+the count, never the text), so it never reaches the export, whose leak check stays as a second net. A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
 Audio-only publications (`audio_url` without video/image, or an audio/* mime) are not posts: skipped
 with a log line, no failure.
 
@@ -77,8 +84,8 @@ import httpx
 
 from . import config
 from .db import get_meta, jdump, jload, now_iso, parse_time, set_meta, upsert_post
-from .generation import (CREDITS_KEY, PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, model_short_label,
-                         sanitize, sanitize_credits, start_source_sim)
+from .generation import (CREDITS_KEY, PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, credit_internal,
+                         model_short_label, sanitize, sanitize_credits, start_source_sim)
 
 PUBLICATIONS_PATH = "/api/v1/publications"
 CURSOR_KEY = "publications_since"  # meta key: next_since of the last fully successful pull
@@ -87,7 +94,8 @@ MAX_PAGES = 1000
 # mime -> (post kind, file extension)
 MEDIA_TYPES = {"video/mp4": ("reel", ".mp4"), "image/png": ("image", ".png"), "image/jpeg": ("image", ".jpg"),
                "image/webp": ("image", ".webp")}
-MAX_MEDIA_BYTES = 1 << 30          # 1 GiB: a web-size reel is far below this
+# site/ is committed: GitHub rejects files over 100 MB, so a bigger file would break every later push
+MAX_MEDIA_BYTES = 95 * 1000 * 1000
 POSTER_WIDTH = 540
 
 
@@ -118,6 +126,7 @@ def read_dotenv(path: Path) -> dict[str, str]:
 class ServiceSettings:
     base_url: str
     key: str = field(repr=False)
+    characters_dir: Path | None = None     # identity.md files for characters missing in the database
 
     @classmethod
     def load(cls, dotenv: Path | None = None) -> "ServiceSettings":
@@ -132,7 +141,10 @@ class ServiceSettings:
                                "(environment or .env in the private dir)")
         if urlsplit(base).scheme not in ("http", "https"):
             raise PublishError(f"{config.ENV_PREFIX}SERVICE_URL must be an http(s) URL")
-        return cls(base.rstrip("/"), key)
+        chars, feed = get("CHARACTERS_DIR"), get("FEED_DIR")
+        chars_dir = Path(chars).expanduser().resolve() if chars else \
+            Path(feed).expanduser().resolve().parent / "characters" if feed else None
+        return cls(base.rstrip("/"), key, chars_dir)
 
 
 # --- service adapter -------------------------------------------------------------------------------
@@ -282,11 +294,15 @@ class ServiceClient:
                     r.read()
                     raise self._fail(what, r)
                 expected = r.headers.get("content-length")
+                if expected is not None and expected.isdigit() and int(expected) > MAX_MEDIA_BYTES:
+                    raise PublishError(f"{what}: {int(expected)} bytes, over the {MAX_MEDIA_BYTES} byte limit "
+                                       "(GitHub's 100 MB file limit); not published")
                 with dest.open("wb") as f:
                     for chunk in r.iter_bytes(1 << 16):
                         n += len(chunk)
                         if n > MAX_MEDIA_BYTES:
-                            raise PublishError(f"{what}: larger than {MAX_MEDIA_BYTES} bytes")
+                            raise PublishError(f"{what}: larger than the {MAX_MEDIA_BYTES} byte limit "
+                                               "(GitHub's 100 MB file limit); not published")
                         h.update(chunk)
                         f.write(chunk)
         except httpx.HTTPError as e:
@@ -423,19 +439,56 @@ def _same(row: sqlite3.Row, fields: dict) -> bool:
                for k, v in fields.items())
 
 
+def _create_characters(con: sqlite3.Connection, root: Path | None, todo: list[tuple[int, Any]], *, dry_run: bool,
+                       res: dict, log: Callable[[str], None]) -> set[str]:
+    """Create the accounts of characters the publications name but the database lacks, from identity.md
+    in `root` (characters.account_from_identity). Returns the slugs a dry run would create. A slug whose
+    identity is missing or unusable is left alone: its items fail as an unknown character."""
+    planned: set[str] = set()
+    if root is None or not Path(root).is_dir():
+        return planned
+    from .characters import IdentityError, account_from_identity, identity_fields
+    slugs = {d["character"].lstrip("@") for _, d in todo if isinstance(d, dict) and isinstance(d.get("character"), str)}
+    for slug in sorted(slugs):
+        if con.execute("SELECT 1 FROM accounts WHERE slug=?", (slug,)).fetchone():
+            continue
+        try:
+            if dry_run:
+                identity_fields(root, slug)
+                planned.add(slug)
+                res["notes"].append(f"{slug}: character would be created from identity.md")
+                continue
+            account_from_identity(con, root, slug)
+            con.commit()
+        except (IdentityError, sqlite3.Error) as e:
+            con.rollback()
+            res["notes"].append(f"{slug}: character not created: {e}")
+            log(f"character {slug} not created: {e}")
+            continue
+        res["characters_created"].append(slug)
+        log(f"created character {slug} from identity.md")
+    return planned
+
+
 def _publish_item(con: sqlite3.Connection, client: ServiceClient, pub: Publication, *, dry_run: bool,
-                  media_root: Path, thumb_root: Path) -> tuple[str, bool]:
-    """Returns (new|updated|unchanged, poster_written)."""
+                  media_root: Path, thumb_root: Path, planned: set[str] = frozenset()) -> tuple[str, bool]:
+    """Returns (new|updated|unchanged, poster_written). `planned`: characters a dry run would create."""
     source = f"generation:{pub.public_id}"
-    aid = _character(con, pub.character)
+    aid = None if dry_run and pub.character.lstrip("@") in planned else _character(con, pub.character)
     clash = con.execute("SELECT source FROM posts WHERE public_id=?", (pub.public_id,)).fetchone()
     if clash and clash["source"] != source:
         raise PublishError(f"{pub.public_id}: public_id already belongs to another post")
     record = public_record(client.summary(pub), pub)
+    leaky = sum(1 for c in record[CREDITS_KEY] if credit_internal(c))
+    if leaky:                                  # never name the text: it is what must not get out
+        raise PublishError(f"{pub.public_id}: {leaky} credit(s) with internal details (run id, take label, file "
+                           "name or path); not published - fix the credits in the video-service")
     row = con.execute("SELECT * FROM posts WHERE source=?", (source,)).fetchone()
     media_rel = f"gen/{pub.public_id}{pub.ext}"
-    posted_at = row["posted_at"] if row is not None and row["posted_at"] else \
-        parse_time(pub.approved_at).isoformat(timespec="seconds")       # first approval = post time
+    # first approval = post time, kept on updates; stored in Europe/Berlin local time (same instant), so the
+    # date part is the world's day (export day lists, "today") and not the UTC date of the service's stamp
+    first = row["posted_at"] if row is not None and row["posted_at"] else pub.approved_at
+    posted_at = parse_time(first).astimezone(config.TZ).isoformat(timespec="seconds")
     fields = {"account_id": aid, "kind": pub.kind, "title": None, "caption": pub.caption, "media": media_rel,
               "poster": None, "posted_at": posted_at, "status": "published", "public_id": pub.public_id,
               "generation_json": jdump(record)}
@@ -577,7 +630,9 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                   thumb_root: Path | None = None, log: Callable[[str], None] = lambda s: None) -> dict:
     """Publish every approved publication and unpublish every revoked one (since the stored cursor,
     or all of them with `full` / without a cursor).
-    Returns {new, updated, unchanged, revoked, skipped, failed: [...], notes: [...], items: [...], incremental, full}.
+    Returns {new, updated, unchanged, revoked, skipped, failed: [...], failed_ids: [...], listing_failed, notes: [...],
+    items: [...], incremental, full}. `listing_failed` is True when the listing itself could not be read
+    (nothing was processed); `failed_ids` are the public_ids of failed items (when the id was valid).
     A full listing also unpublishes published generation posts missing from it (see _missing) and,
     when nothing failed (and not dry_run), stores its time as LAST_FULL_KEY.
     Audio-only publications are skipped (counted in `skipped`, logged, no post).
@@ -588,21 +643,27 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
     since = None if full else get_meta(con, CURSOR_KEY)
     since = since if isinstance(since, str) and since else None
     client = ServiceClient(settings, transport)
-    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "skipped": 0, "failed": [], "notes": [],
-                           "items": [], "dry_run": dry_run, "incremental": since is not None, "full": since is None}
+    res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "skipped": 0, "failed": [],
+                           "failed_ids": [], "listing_failed": False, "characters_created": [], "notes": [], "items": [],
+                           "dry_run": dry_run,
+                           "incremental": since is not None, "full": since is None}
 
-    def fail(msg: str) -> None:
+    def fail(msg: str, pid: Any = None) -> None:
         msg = _redact(msg, settings.key)
         res["failed"].append(msg)
+        if isinstance(pid, str) and PUBLIC_ID.match(pid) and pid not in res["failed_ids"]:
+            res["failed_ids"].append(pid)
         log(f"failed {msg}")
 
     try:
         try:
             raw_pubs, raw_revoked, cursor = client.publications(since)
         except PublishError as e:
+            res["listing_failed"] = True
             fail(str(e))
             return res
         todo, revoked = _merge(raw_pubs, raw_revoked, fail)
+        planned = _create_characters(con, settings.characters_dir, todo, dry_run=dry_run, res=res, log=log)
         for n, d in todo:
             if audio_only(d):                  # not planned as posts: skip, no failure (the cursor moves on)
                 pid = d.get("public_id")
@@ -614,14 +675,14 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
             try:
                 pub = Publication.parse(d)
             except PublishError as e:
-                fail(f"publication #{n}: {e}")
+                fail(f"publication #{n}: {e}", d.get("public_id") if isinstance(d, dict) else None)
                 continue
             try:
                 status, poster = _publish_item(con, client, pub, dry_run=dry_run, media_root=media_root,
-                                               thumb_root=thumb_root)
+                                               thumb_root=thumb_root, planned=planned)
             except (PublishError, ValueError, OSError, sqlite3.Error) as e:
                 con.rollback()
-                fail(f"{pub.public_id}: {e}" if not str(e).startswith(pub.public_id) else str(e))
+                fail(f"{pub.public_id}: {e}" if not str(e).startswith(pub.public_id) else str(e), pub.public_id)
                 continue
             res[status] += 1
             res["items"].append({"public_id": pub.public_id, "kind": pub.kind, "status": status,
@@ -642,7 +703,7 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                 r = _revoke(con, pid, at, dry_run=dry_run)
             except sqlite3.Error as e:
                 con.rollback()
-                fail(f"{pid}: revoke: {e}")
+                fail(f"{pid}: revoke: {e}", pid)
                 continue
             if r == "unknown":
                 res["notes"].append(f"{pid}: revoked, but no such post (nothing to do)")

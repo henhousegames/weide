@@ -16,7 +16,7 @@ are still read as a fallback, so existing setups keep working. The prefixed name
   HENHOUSE_TODAY        YYYY-MM-DD, the world's "today" (ranking windows); default: local date
   HENHOUSE_FEED_DIR     preview only: curated feed dir (posts.jsonl, interactions.jsonl; read-only).
                         Unset: the preview shows published posts, approvals and drafts (no curated feed)
-  HENHOUSE_CHARACTERS_DIR  preview only: character identities (<slug>/identity.md).
+  HENHOUSE_CHARACTERS_DIR  preview and pull-approved: character identities (<slug>/identity.md).
                         Default: <feed dir>/../characters
 """
 from __future__ import annotations

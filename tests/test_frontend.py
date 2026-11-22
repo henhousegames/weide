@@ -270,3 +270,17 @@ def test_css_tabs_fit_and_post_actions_do_not_wrap():
     assert sum(len(t) * 12.5 * 0.6 + 8 for t in labels) + 8 <= 320
     assert ".postpage .reacts { flex-wrap: nowrap; }" in css
     assert ".sheet {" in css and "70dvh" in css and "html.sheet-open" in css
+
+
+def test_feed_overlay_and_rail_keep_clear_of_the_bottom_tabs():
+    """The caption/credits/disclaimer block and the action rail stick above the bottom tabs (--nav-h includes
+    the safe-area inset), so a partly visible slide (the first one, under the story rings) shows them too."""
+    import re
+    css = (REPO / "static/app.css").read_text(encoding="utf-8")
+    assert "--nav-h: calc(58px + env(safe-area-inset-bottom))" in css
+
+    def rule(sel):
+        return re.search(re.escape(sel) + r" \{([^}]*)\}", css).group(1)
+    assert "position: sticky" in rule(".post__overlay") and "bottom: var(--nav-h)" in rule(".post__overlay")
+    assert "position: sticky" in rule(".reacts--rail") and "bottom: calc(var(--nav-h) + 16px)" in rule(".reacts--rail")
+    assert "overflow: clip" in rule(".post__frame")            # hidden would make the frame the sticky scroller
