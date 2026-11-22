@@ -262,9 +262,9 @@ def test_card_summary_and_export_carry_credits(published, tmp_path):
     assert any("credits" in h for h in leak_check(out))
 
 
-def test_export_refuses_internal_credits_but_ingest_keeps_them(tmp_path, monkeypatch):
-    """Ingest does not filter (the private preview shows the raw text); the export leak check aborts and
-    names the post's public_id, not the credit text."""
+def test_pull_refuses_internal_credits_and_export_still_checks(tmp_path, monkeypatch):
+    """A publication whose credits name internal details fails alone at pull time (retried, the message
+    names no credit text); the good one is published. The export leak check stays a second net."""
     internal = {"kind": "audio_source", "text": INTERNAL_TEXTS[1],
                 "license": {"id": "CC0-1.0", "url": "https://creativecommons.org/publicdomain/zero/1.0/"}}
     dbp = tmp_path / "h.db"
@@ -275,13 +275,23 @@ def test_export_refuses_internal_credits_but_ingest_keeps_them(tmp_path, monkeyp
     monkeypatch.setattr(config, "THUMB_ROOT", tmp_path / "thumb")
     svc = Service()
     svc.summaries[WITH]["credits"] = [WANT[0], internal]
-    pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc), log=lambda _: None)
-    assert gen_json(con, WITH)["credits"] == [WANT[0], internal]                     # stored raw (private)
+    res = pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc), log=lambda _: None)
+    assert res["failed_ids"] == [WITH] and "internal details" in res["failed"][0]
+    assert not any("example_sfx" in f or "::" in f or "doorCreak" in f for f in res["failed"])
+    assert con.execute("SELECT COUNT(*) FROM posts WHERE public_id=?", (WITH,)).fetchone()[0] == 0
+    assert gen_json(con, EMPTY)["credits"] == []                                     # the others went through
+    assert db.get_meta(con, "publications_since") is None                            # retried next run
+    # second net: a record that got in some other way still fails the export, naming only the public_id
+    row = con.execute("SELECT id, generation_json FROM posts WHERE public_id=?", (EMPTY,)).fetchone()
+    gen = json.loads(row["generation_json"])
+    gen["credits"] = [WANT[0], internal]
+    con.execute("UPDATE posts SET generation_json=? WHERE id=?", (json.dumps(gen), row["id"]))
+    con.commit()
     con.close()
     stats = export_static(tmp_path / "site", dbp)
     hits = stats["leaks"]
-    assert hits and all(WITH in h for h in hits)
-    assert {h.split(":")[0] for h in hits} >= {"data/feed.json", f"data/gen/{WITH}.json"}
+    assert hits and all(EMPTY in h for h in hits)
+    assert {h.split(":")[0] for h in hits} >= {"data/feed.json", f"data/gen/{EMPTY}.json"}
     assert not any("example_sfx" in h or "::" in h or "doorCreak" in h for h in hits)
 
 

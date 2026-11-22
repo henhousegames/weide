@@ -63,8 +63,9 @@ reported as notes. A malformed item only fails itself; the others are still proc
 
 The service's summary is sanitized again before it is stored. Inputs are kept only when the summary
 marks them `published` (a reference to that publication's own post, shown once that post is published
-here); every other input is shown as "privater Input". Input media are not downloaded. A failing item
-leaves no post and no file behind; the command then exits non-zero.
+here); every other input is shown as "privater Input". Input media are not downloaded. Credits that
+still name internal details after sanitizing (run ids, take labels, file names, paths) make the item
+fail (it is retried; the message gives the count, never the text). A failing item leaves no post and no file behind; the command then exits non-zero.
 
 Only `app/weide/publish.py` (`ServiceClient`, `Publication`) knows the API shape.
 

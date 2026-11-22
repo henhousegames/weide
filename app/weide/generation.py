@@ -117,7 +117,8 @@ def sanitize_credits(raw: Any) -> list[dict]:
 
 # Internal details a credit text/model must never carry to the public site (the service sometimes
 # names its own takes and asset archives, e.g. "own generation: ... audio of gen_<hex> (h004 b4 t1)" or
-# "pack (pack.zip) :: Audio/file.ogg"). Ingest keeps them (the preview is private); the export refuses.
+# "pack (pack.zip) :: Audio/file.ogg"). pull-approved refuses such an item (retried), the export leak check
+# refuses it too (second net); the private preview, which reads the service directly, shows the raw text.
 _PATH_DIRS = (r"home|tmp|users|var|mnt|srv|opt|root|etc|data|private|workspace|outputs?|inputs?|assets|audio|sfx|"
               r"sounds?|samples|models?|ckpts?|checkpoints|loras?|runs?|takes?|renders?|comfyui|archives?")
 _CREDIT_INTERNAL = re.compile(

@@ -57,7 +57,9 @@ item leaves no post and no file behind and does not stop the others.
 
 Credits: the summary's `credits` list (else the list item's) is kept in generation_json as `credits`
 (generation.sanitize_credits: kind/text/model/license{id,url}, strings only, http(s) URL only; [] when
-missing). A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
+missing). An item whose sanitized credits still name internal details (generation.credit_internal: run
+ids, take labels, file names, paths) is refused as a failed item (retried next run; the message names
+the count, never the text), so it never reaches the export, whose leak check stays as a second net. A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
 Audio-only publications (`audio_url` without video/image, or an audio/* mime) are not posts: skipped
 with a log line, no failure.
 
@@ -82,8 +84,8 @@ import httpx
 
 from . import config
 from .db import get_meta, jdump, jload, now_iso, parse_time, set_meta, upsert_post
-from .generation import (CREDITS_KEY, PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, model_short_label,
-                         sanitize, sanitize_credits, start_source_sim)
+from .generation import (CREDITS_KEY, PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, credit_internal,
+                         model_short_label, sanitize, sanitize_credits, start_source_sim)
 
 PUBLICATIONS_PATH = "/api/v1/publications"
 CURSOR_KEY = "publications_since"  # meta key: next_since of the last fully successful pull
@@ -472,6 +474,10 @@ def _publish_item(con: sqlite3.Connection, client: ServiceClient, pub: Publicati
     if clash and clash["source"] != source:
         raise PublishError(f"{pub.public_id}: public_id already belongs to another post")
     record = public_record(client.summary(pub), pub)
+    leaky = sum(1 for c in record[CREDITS_KEY] if credit_internal(c))
+    if leaky:                                  # never name the text: it is what must not get out
+        raise PublishError(f"{pub.public_id}: {leaky} credit(s) with internal details (run id, take label, file "
+                           "name or path); not published - fix the credits in the video-service")
     row = con.execute("SELECT * FROM posts WHERE source=?", (source,)).fetchone()
     media_rel = f"gen/{pub.public_id}{pub.ext}"
     posted_at = row["posted_at"] if row is not None and row["posted_at"] else \
