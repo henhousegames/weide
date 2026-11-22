@@ -241,15 +241,17 @@ html[data-view="feed"] .feed__head, html[data-view="feed"] .site-foot { scroll-s
 
 .worlds {
   position: sticky; top: 0; z-index: 15; height: var(--worlds-h); margin-bottom: calc(-1 * var(--worlds-h));
-  display: flex; justify-content: safe center; align-items: center; gap: 0; padding: 0 6px;
+  display: flex; justify-content: safe center; align-items: center; gap: 0; padding: 0 4px;
   overflow-x: auto; scrollbar-width: none; pointer-events: none;
 }
+/* five tabs fit side by side down to 320 px: font and padding shrink with the viewport (no sideways scroll) */
 .worlds::-webkit-scrollbar { display: none; }
 .worlds__item {
   flex: none; pointer-events: auto; position: relative;
-  padding: 8px 8px; color: rgba(255, 255, 255, .72); text-decoration: none;
-  font-size: 14.5px; font-weight: 700; letter-spacing: .005em; text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
+  padding: 8px clamp(4px, 1.9vw, 8px); color: rgba(255, 255, 255, .72); text-decoration: none; white-space: nowrap;
+  font-size: clamp(12.5px, 3.9vw, 14.5px); font-weight: 700; letter-spacing: 0; text-shadow: 0 1px 3px rgba(0, 0, 0, .6);
 }
+.worlds__item:focus-visible { outline-offset: -2px; }
 .worlds__item:hover { color: #fff; }
 .worlds__item[aria-current="page"] { color: #fff; }
 .worlds__item[aria-current="page"]::after {
@@ -334,13 +336,16 @@ html[data-view="feed"] .feed__head, html[data-view="feed"] .site-foot { scroll-s
 .media__sound {
   position: absolute; right: 12px; top: calc(var(--worlds-h) + 8px); z-index: 3;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 999px;
-  background: var(--overlay); color: #fff; backdrop-filter: blur(6px);
-  font-size: 0; cursor: pointer;
+  min-width: 40px; height: 40px; padding: 0 13px 0 11px; border: 0; border-radius: 999px;
+  background: var(--overlay); color: #fff; backdrop-filter: blur(6px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16);
+  font-size: 13px; font-weight: 700; line-height: 1; white-space: nowrap; cursor: pointer;
 }
+.media__sound.is-on { padding: 0; width: 40px; }
+.media__sound:focus-visible { outline: 2px solid var(--tag); outline-offset: 2px; }
 .postpage .media__sound { top: 10px; right: 10px; }
 .media__sound svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .media__tap { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; border: 0; padding: 0; background: transparent; cursor: pointer; }
+.media__tap:focus-visible { outline: 3px solid var(--tag); outline-offset: -3px; border-radius: inherit; }
 .media__play {
   display: grid; place-items: center; width: 68px; height: 68px; border-radius: 50%;
   background: rgba(10, 24, 15, .45); color: #fff; backdrop-filter: blur(6px);
@@ -348,6 +353,15 @@ html[data-view="feed"] .feed__head, html[data-view="feed"] .site-foot { scroll-s
 }
 .media__play svg { width: 30px; height: 30px; margin-left: 4px; fill: currentColor; }
 .media:not(.is-playing) .media__play { opacity: .9; }
+/* a tap: the new state (play / pause) flashes in the centre, then fades */
+.media__flash {
+  position: absolute; left: 50%; top: 50%; z-index: 2; display: grid; place-items: center;
+  width: 76px; height: 76px; margin: -38px 0 0 -38px; border-radius: 50%; pointer-events: none;
+  background: rgba(10, 24, 15, .55); color: #fff; animation: flash .7s ease-out forwards;
+}
+.media__flash svg { width: 32px; height: 32px; fill: currentColor; }
+.media:has(.media__flash) .media__play { opacity: 0; }
+@keyframes flash { 0% { opacity: 0; transform: scale(.7); } 20% { opacity: 1; transform: scale(1); } 70% { opacity: 1; } 100% { opacity: 0; transform: scale(1.15); } }
 .media__missing {
   position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center;
   color: #a8c0a6; font-size: 14px;
@@ -402,6 +416,16 @@ html[data-view="feed"] .feed__head, html[data-view="feed"] .site-foot { scroll-s
 .react__e { font-size: 15px; line-height: 1; }
 .react__e svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .react--share { margin-left: auto; }
+.postpage .reacts { flex-wrap: nowrap; }
+.postpage .react { flex: none; }
+@media (max-width: 419px) {
+  /* narrow phones: the four reactions share the row evenly, share becomes an icon (label for screen readers) */
+  .postpage .reacts { gap: 4px; }
+  .postpage .react { flex: 1 1 0; min-width: 0; justify-content: center; padding: 0 4px; gap: 3px; font-size: 12.5px; }
+  .postpage .react__e { font-size: 14px; }
+  .postpage .react--share { flex: none; width: 34px; padding: 0; margin-left: 2px; }
+  .postpage .react--share .react__n { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
 .react.bump .react__e { animation: bump .35s ease-out; }
 @keyframes bump { 40% { transform: scale(1.45) rotate(-8deg); } }
 .reacts--rail {
@@ -774,6 +798,8 @@ details.howto p { margin: 0 0 6px; color: var(--ink-2); font-size: 13px; }
 @media (prefers-reduced-motion: reduce) {
   .react.bump .react__e { animation: none; }
   .media__play { transition: none; }
+  .media__flash { animation-duration: .9s; animation-timing-function: steps(1, end); }
+  .sheet, .sheet__backdrop { transition: none !important; }
   * { scroll-behavior: auto !important; }
 }
 
@@ -844,3 +870,47 @@ a.gen-badge:hover { color: var(--ink); background: var(--ground-2); }
   font-variation-settings: "wdth" 88; text-wrap: pretty;
 }
 .postpage .robot-note { margin-left: 0; }
+
+/* --- comment sheet (sheet.js) ----------------------------------------------------------------- */
+html.sheet-open, html.sheet-open body { overflow: hidden; overscroll-behavior: none; }
+.sheet-layer { position: fixed; inset: 0; z-index: 60; }
+.sheet__backdrop {
+  position: absolute; inset: 0; background: rgba(4, 12, 7, .55); opacity: 0; transition: opacity .22s ease-out;
+}
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0 auto; max-width: 520px;
+  height: 70vh; display: flex; flex-direction: column;
+  border-radius: 18px 18px 0 0; background: var(--ground); color: var(--ink);
+  box-shadow: 0 -10px 40px -10px rgba(0, 0, 0, .6);
+  transform: translateY(100%); transition: transform .26s cubic-bezier(.2, .8, .2, 1);
+}
+@supports (height: 70dvh) { .sheet { height: 70dvh; } }
+.sheet-layer.is-open .sheet__backdrop { opacity: 1; }
+.sheet-layer.is-open .sheet { transform: translateY(0); }
+.sheet.is-dragging { transition: none; }
+.sheet:focus { outline: none; }
+.sheet__head {
+  position: relative; flex: none; display: flex; align-items: center; justify-content: center;
+  min-height: 52px; padding: 14px 52px 8px; border-bottom: 1px solid var(--line); touch-action: none; cursor: grab;
+}
+.sheet__handle {
+  position: absolute; left: 50%; top: 7px; width: 40px; height: 5px; margin-left: -20px;
+  border-radius: 99px; background: var(--ink-3); opacity: .7;
+}
+.sheet__title { margin: 0; font-size: 15px; font-weight: 750; }
+.sheet__close {
+  position: absolute; right: 8px; top: 8px; display: grid; place-items: center; width: 40px; height: 40px;
+  border: 0; border-radius: 50%; background: transparent; color: var(--ink-2); cursor: pointer;
+}
+.sheet__close:hover { background: var(--ground-2); color: var(--ink); }
+.sheet__close svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.sheet__list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px 18px; }
+.sheet__list .loading { padding: 24px 0; }
+.sheet__foot {
+  flex: none; display: flex; justify-content: center;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line);
+}
+.sheet__link { justify-content: center; }
+@media (min-width: 1024px) {
+  .sheet { bottom: 16px; border-radius: 18px; height: min(70vh, 720px); }
+}

@@ -137,8 +137,15 @@ export function reactionBar(post, { showComments = true, rail = false, share = t
   }
   const n = post.comment_count || 0;
   if (showComments) {
+    // opens the comment sheet over the feed (main.js listens); the link still works without it
+    // (new tab, modifier keys): #/p/<id> has the same comments
     bar.append(h("a", { class: "react react--comments", href: `#/p/${encodeURIComponent(post.id)}`,
-      "aria-label": `${num(n)} ${n === 1 ? "Kommentar" : "Kommentare"} – Post öffnen` },
+      "aria-label": `${num(n)} ${n === 1 ? "Kommentar" : "Kommentare"} – Kommentare öffnen`, "aria-haspopup": "dialog",
+      onclick: (e) => {
+        if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent("app:comments", { detail: { post, opener: e.currentTarget } }));
+      } },
     h("span", { class: "react__e", "aria-hidden": "true" }, icons.comment()), h("span", { class: "react__n" }, compact(n))));
   }
   if (share) {
@@ -200,6 +207,18 @@ export function robotNote(post) {
 
 export function siteFooter() {
   return h("footer", { class: "site-foot" }, h("p", {}, disclaimer()));
+}
+
+// one comment with its nested replies (post page, comment sheet)
+export function commentNode(c) {
+  return h("li", { class: "comment" },
+    avatar(c.account, 30),
+    h("div", { class: "comment__body" },
+      h("div", { class: "comment__who" },
+        h("a", { class: "comment__name", href: `#/u/${encodeURIComponent(c.account.slug)}` }, c.account.display_name),
+        h("time", { class: "comment__time", datetime: c.created_at }, when(c.created_at))),
+      h("p", { class: "comment__text" }, c.text),
+      c.replies?.length ? h("ul", { class: "comment__replies" }, c.replies.map(commentNode)) : null));
 }
 
 export function postHead(post, { size = 40 } = {}) {
