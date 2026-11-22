@@ -56,6 +56,8 @@ export const icons = {
   share: () => svg(["M12 3v12", "M7.5 7.5 12 3l4.5 4.5", "M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"]),
   more: () => svg(["M5 12h.01M12 12h.01M19 12h.01"]),
   play: () => svg(["M8 5v14l11-7z"]),
+  pause: () => svg(["M7 5h3.5v14H7z", "M13.5 5H17v14h-3.5z"]),
+  close: () => svg(["M6 6l12 12M18 6 6 18"]),
   grid: () => svg(["M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"]),
 };
 

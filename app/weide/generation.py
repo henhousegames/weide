@@ -115,10 +115,34 @@ def sanitize_credits(raw: Any) -> list[dict]:
     return out
 
 
-def credits_leaks(obj: Any, where: str, hits: list[str]) -> None:
-    """Leak check for a credits list: it must be exactly its sanitized form."""
+# Internal details a credit text/model must never carry to the public site (the service sometimes
+# names its own takes and asset archives, e.g. "own generation: ... audio of gen_<hex> (h004 b4 t1)" or
+# "pack (pack.zip) :: Audio/file.ogg"). Ingest keeps them (the preview is private); the export refuses.
+_CREDIT_INTERNAL = re.compile(
+    r"gen_[0-9a-f]{6,}"                                               # internal run id
+    r"| :: "                                                          # archive member separator
+    r"|\.(?:zip|7z|tar|gz|ogg|flac|wav|mp3|mp4|png|safetensors)\b"   # file names
+    r"|[^\s/]/|/[^\s/]"                                              # path segments (license.url is separate)
+    r"|\bh\d{3}\b",                                                   # internal take label
+    re.I)
+
+
+def credit_internal(c: Any) -> bool:
+    """True when a credit's text or model names internal run ids, take labels, files or paths."""
+    return isinstance(c, dict) and any(isinstance(c.get(k), str) and _CREDIT_INTERNAL.search(c[k])
+                                       for k in ("text", "model"))
+
+
+def credits_leaks(obj: Any, where: str, hits: list[str], post: str | None = None) -> None:
+    """Leak check for a credits list: it must be exactly its sanitized form, and no text/model may
+    carry internal details (credit_internal). The hit names the post's public_id, never the text."""
     if not isinstance(obj, list) or sanitize_credits(obj) != obj:
         hits.append(f"{where}: credits not in public form {str(obj)[:80]!r}")
+        return
+    n = sum(1 for c in obj if credit_internal(c))
+    if n:
+        hits.append(f"{where}: post {post or '?'}: {n} credit(s) with internal details "
+                    "(run id, take label, file name or path) - fix in the video-service")
 
 
 # --- start source -----------------------------------------------------------------------------------
@@ -318,7 +342,7 @@ def public_summary(con: sqlite3.Connection, row: sqlite3.Row) -> dict | None:
     return out
 
 
-def summary_leaks(obj: Any, where: str, hits: list[str], *, top: bool = True) -> None:
+def summary_leaks(obj: Any, where: str, hits: list[str], *, top: bool = True, post: str | None = None) -> None:
     """Leak scan for a public summary: private key names, paths, URLs with hosts, IPs, tokens, run ids.
     Prompts and settings (seed, steps, a parameter called `key` ...) are allowed. The top-level
     `credits` list is checked by credits_leaks (its license URL is public)."""
@@ -327,7 +351,7 @@ def summary_leaks(obj: Any, where: str, hits: list[str], *, top: bool = True) ->
             if is_private_key(k):
                 hits.append(f"{where}: private key {k!r}")
             if top and k == CREDITS_KEY:
-                credits_leaks(v, where, hits)
+                credits_leaks(v, where, hits, post)
                 continue
             summary_leaks(v, where, hits, top=False)
     elif isinstance(obj, list):

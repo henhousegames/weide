@@ -84,7 +84,7 @@ build_site() {
   local out
   out=$(mktemp)
   if ! uv run --quiet weide deploy >"$out" 2>/dev/null; then
-    log "deploy failed: $(jq -c '{errors: (.errors // [] | length), pull: (.pull // {} | {new, updated, revoked})}' "$out" 2>/dev/null || echo 'no JSON output')"
+    log "deploy failed: $(jq -c '{errors: (.errors // [] | length), first_errors: (.errors // [] | .[:5]), pull: (.pull // {} | {new, updated, revoked})}' "$out" 2>/dev/null || echo 'no JSON output')"
     rm -f "$out"
     die "weide deploy failed; nothing committed"
   fi

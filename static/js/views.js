@@ -1,8 +1,8 @@
 // Views: feed, post detail, profile, leaderboards, people, the desktop rail.
 // Copy is in-world German; CLI hints live in the README (and the collapsed "Quelle und Ranking").
 import { api } from "./api.js";
-import { avatar, earTag, genBadge, genCredits, media, postCard, postHead, reactionBar, robotNote, simNote, state } from "./ui.js";
-import { compact, copy, dayLabel, dec, h, icons, longDay, mount, num, plural, score, when } from "./util.js";
+import { avatar, commentNode, earTag, genBadge, genCredits, media, postCard, postHead, reactionBar, robotNote, simNote, state } from "./ui.js";
+import { compact, copy, dayLabel, dec, h, icons, longDay, mount, num, plural, score } from "./util.js";
 
 const PAGE = 8;
 
@@ -121,17 +121,6 @@ function backLink() {
     class: "back", href: "#/",
     onclick: (e) => { if (history.length > 1) { e.preventDefault(); history.back(); } },
   }, icons.back(), "Zurück");
-}
-
-function commentNode(c) {
-  return h("li", { class: "comment" },
-    avatar(c.account, 30),
-    h("div", { class: "comment__body" },
-      h("div", { class: "comment__who" },
-        h("a", { class: "comment__name", href: `#/u/${encodeURIComponent(c.account.slug)}` }, c.account.display_name),
-        h("time", { class: "comment__time", datetime: c.created_at }, when(c.created_at))),
-      h("p", { class: "comment__text" }, c.text),
-      c.replies?.length ? h("ul", { class: "comment__replies" }, c.replies.map(commentNode)) : null));
 }
 
 function likedBy(p) {

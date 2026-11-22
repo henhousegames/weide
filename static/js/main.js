@@ -1,6 +1,7 @@
 // Hash router: #/  #/w/<world>  #/p/<id>  #/u/<slug>  #/heute[/<YYYY-MM-DD>]  #/woche[/<YYYY-Www>]  #/leute  #/g/<public_id>
 import { api } from "./api.js";
 import { resetPlayers } from "./player.js";
+import { closeSheetNow, openComments } from "./sheet.js";
 import { siteFooter, state } from "./ui.js";
 import { dayLabel, h, mount } from "./util.js";
 import { feedView, generationView, notFound, peopleView, postView, profileView, railView, topView } from "./views.js";
@@ -38,6 +39,7 @@ async function render() {
   lastHash = location.hash;
   if (typeof cleanup === "function") cleanup();
   cleanup = null;
+  closeSheetNow();
   resetPlayers();
   const r = route();
   app.dataset.view = r.view;
@@ -85,6 +87,8 @@ async function start() {
   }
   document.getElementById("today").textContent = dayLabel(state.meta.today);
   window.addEventListener("hashchange", render);
+  // the rail's comment button (ui.js reactionBar): comments in a bottom sheet over the feed (sheet.js)
+  document.addEventListener("app:comments", (e) => openComments(e.detail.post, e.detail.opener));
   desktop.addEventListener("change", () => refreshRail(true));
   render();
 }
