@@ -135,9 +135,21 @@ newest_public_id() {
   jq -r '[.items[]? | .generation.public_id? // empty] | first // empty' site/data/feed.json
 }
 
-pages_build_type() {   # prints workflow|legacy, or "none" when Pages is not set up
-  local slug=$1 out
-  if out=$(gh api "repos/$slug/pages" --jq '.build_type' 2>/dev/null); then echo "$out"; else echo none; fi
+# Prints workflow|legacy, or "none" when Pages is not set up (HTTP 404). Any other gh failure (network,
+# auth, 5xx) returns 1, so the caller stops without creating Pages and the next run retries.
+pages_build_type() {
+  local slug=$1 out err rc=0
+  err=$(mktemp)
+  out=$(gh api "repos/$slug/pages" --jq '.build_type' 2>"$err") || rc=$?
+  if [ "$rc" = 0 ] && [ -n "$out" ]; then
+    rm -f "$err"; echo "$out"; return 0
+  fi
+  if [ "$rc" != 0 ] && grep -q 'HTTP 404' "$err"; then
+    rm -f "$err"; echo none; return 0
+  fi
+  log "gh api repos/$slug/pages failed (exit $rc): $(head -c 200 "$err" | tr '\n' ' ')" >&2
+  rm -f "$err"
+  return 1
 }
 
 wait_for_site() {
@@ -187,7 +199,7 @@ one_time_switch() {
       log "origin remote updated to the new name" ;;
   esac
 
-  build=$(pages_build_type "$slug")
+  build=$(pages_build_type "$slug") || die "reading the Pages settings failed; not changing Pages (retried next run)"
   log "Pages build_type: $build"
   case "$build" in
     workflow) ;;

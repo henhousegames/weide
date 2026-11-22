@@ -145,3 +145,16 @@ def test_old_gitignore_with_generated_media_still_runs(deploy):
     assert deploy()[0] == 0
     code, out = deploy()
     assert code == 0, out
+
+
+@pytest.mark.parametrize("pages,posted", [("down", False), ("404", True)])
+def test_pages_lookup_failure_is_not_none(deploy, pages, posted):
+    assert deploy()[0] == 0
+    (deploy.private / ".repo-switch-done").unlink()
+    code, out = deploy(FAKE_UV_MODE="noop", FAKE_GH_PAGES=pages)
+    assert code != 0                       # down: stops at the lookup; 404: Pages created, dispatch (fake) fails
+    calls = deploy.gh_log.read_text()
+    assert ("api -X POST" in calls) is posted
+    if not posted:
+        assert "reading the Pages settings failed" in out
+    assert not (deploy.private / ".repo-switch-done").exists()
