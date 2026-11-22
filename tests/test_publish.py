@@ -138,7 +138,7 @@ def test_publish_and_idempotent(env):
     [p] = posts(con)
     assert p["status"] == "published" and p["public_id"] == PID and p["source"] == f"generation:{PID}"
     assert p["kind"] == "reel" and p["media"] == f"gen/{PID}.mp4" and p["caption"] == "Rasenmäher-Test"
-    assert p["posted_at"] == "2026-11-17T17:00:00+00:00"
+    assert p["posted_at"] == "2026-11-17T18:00:00+01:00"            # Europe/Berlin, same instant
     assert (media / f"gen/{PID}.mp4").read_bytes() == MP4
     assert not [f for f in (media / "gen").iterdir() if f.name.startswith(".")]      # temp dir cleaned
     gen = json.loads(p["generation_json"])
@@ -161,7 +161,7 @@ def test_caption_update_keeps_post_time(env):
     res = run(con, svc)
     assert (res["new"], res["updated"], res["incremental"]) == (0, 1, True)
     [p] = posts(con)
-    assert p["caption"] == "Neue Caption" and p["posted_at"] == "2026-11-17T17:00:00+00:00"
+    assert p["caption"] == "Neue Caption" and p["posted_at"] == "2026-11-17T18:00:00+01:00"
 
 
 def test_dry_run_writes_nothing(env):
@@ -633,3 +633,25 @@ def test_media_over_the_size_limit_fails_alone(env, monkeypatch):
         if req.url.path.endswith("/media/output") else real(req)
     res = pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc_nolen))
     assert res["failed_ids"] == ["pub_BIG01"] and "byte limit" in res["failed"][0]
+
+
+def test_posted_at_uses_the_berlin_day(env, tmp_path, monkeypatch):
+    """Approved 23:30 UTC = 00:30 the next day in Berlin: the post belongs to the Berlin day (today, top lists)."""
+    con, svc, *_ = env
+    monkeypatch.setattr(config, "TODAY_OVERRIDE", None)
+    svc.pubs = [publication("pub_LATE01", approved_at="2026-11-21T23:30:00Z")]
+    assert run(con, svc)["new"] == 1
+    [p] = posts(con)
+    assert p["posted_at"] == "2026-11-22T00:30:00+01:00"
+    con.commit()
+    out = export_static(tmp_path / "site", env[4])
+    assert out["today"] == "2026-11-22" and out["leaks"] == []
+    day = json.loads((tmp_path / "site/data/top/day-2026-11-22.json").read_text())
+    assert [i["generation"]["public_id"] for i in day["items"] if i.get("generation")] == ["pub_LATE01"]
+    assert not (tmp_path / "site/data/top/day-2026-11-21.json").exists()
+    # a post stored earlier with the UTC stamp is normalised by the next full pull (same instant)
+    con.execute("UPDATE posts SET posted_at='2026-11-21T23:30:00+00:00'")
+    con.commit()
+    res = run(con, svc, full=True)
+    assert res["updated"] == 1 and posts(con)[0]["posted_at"] == "2026-11-22T00:30:00+01:00"
+    assert run(con, svc, full=True)["unchanged"] == 1

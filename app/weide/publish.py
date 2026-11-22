@@ -485,8 +485,10 @@ def _publish_item(con: sqlite3.Connection, client: ServiceClient, pub: Publicati
                            "name or path); not published - fix the credits in the video-service")
     row = con.execute("SELECT * FROM posts WHERE source=?", (source,)).fetchone()
     media_rel = f"gen/{pub.public_id}{pub.ext}"
-    posted_at = row["posted_at"] if row is not None and row["posted_at"] else \
-        parse_time(pub.approved_at).isoformat(timespec="seconds")       # first approval = post time
+    # first approval = post time, kept on updates; stored in Europe/Berlin local time (same instant), so the
+    # date part is the world's day (export day lists, "today") and not the UTC date of the service's stamp
+    first = row["posted_at"] if row is not None and row["posted_at"] else pub.approved_at
+    posted_at = parse_time(first).astimezone(config.TZ).isoformat(timespec="seconds")
     fields = {"account_id": aid, "kind": pub.kind, "title": None, "caption": pub.caption, "media": media_rel,
               "poster": None, "posted_at": posted_at, "status": "published", "public_id": pub.public_id,
               "generation_json": jdump(record)}

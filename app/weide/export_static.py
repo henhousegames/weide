@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
+from .db import parse_time
 from .generation import _TOKEN, PUBLIC_ID, credits_leaks, summary_leaks
 from .media import MediaError, avatar_file, media_file, thumb_file
 
@@ -199,13 +200,17 @@ def newest_post_day(db_file: Path) -> str | None:
         return None
     con = sqlite3.connect(str(db_file))
     try:
-        row = con.execute("SELECT substr(posted_at, 1, 10) FROM posts WHERE status='published' "
-                          "ORDER BY ts DESC LIMIT 1").fetchone()
+        row = con.execute("SELECT posted_at FROM posts WHERE status='published' ORDER BY ts DESC LIMIT 1").fetchone()
     except sqlite3.OperationalError:
         return None
     finally:
         con.close()
-    return row[0] if row else None
+    return world_day(row[0]) if row else None
+
+
+def world_day(posted_at: str) -> str:
+    """The Europe/Berlin date of a post time (the ranking windows use the same zone)."""
+    return parse_time(posted_at).astimezone(config.TZ).date().isoformat()
 
 
 def _prune(out: Path, keep: set[str]) -> list[str]:
@@ -291,7 +296,7 @@ def _export(out: Path, client: Any, con: sqlite3.Connection, link: bool) -> dict
         _write(out / f"data/accounts/{a['slug']}.json", _clean(get(f"/api/accounts/{a['slug']}"), files))
         stats["accounts"] += 1
 
-    days = {r[0] for r in con.execute("SELECT DISTINCT substr(posted_at, 1, 10) FROM posts WHERE status='published'")}
+    days = {world_day(r[0]) for r in con.execute("SELECT DISTINCT posted_at FROM posts WHERE status='published'")}
     days.add(meta["today"])
     weeks = {meta["week"]}
     for d in days:
