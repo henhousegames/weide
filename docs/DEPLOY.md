@@ -12,6 +12,11 @@ variables in the environment:
 |---|---|
 | `HENHOUSE_SERVICE_URL` | base URL of the generation service (`scheme://host:port`, without `/api/v1`) |
 | `HENHOUSE_SERVICE_KEY` | bearer key with scope `publish` (read-only). Never printed or logged |
+| `HENHOUSE_CHARACTERS_DIR` | optional: the private character identities (`<slug>/identity.md`, read-only), used to create accounts of characters that were never seeded. Default: `<HENHOUSE_FEED_DIR>/../characters` when `HENHOUSE_FEED_DIR` is set; unset: no accounts are created |
+
+`weide` reads these from the environment first, then from `.env` in the private dir. The deploy unit
+also loads that same file (`EnvironmentFile=`), so a line there is all the timer needs, e.g.
+`HENHOUSE_CHARACTERS_DIR=~/develop/henhouse-stories/characters` (`~` is expanded by `weide`).
 
 ## Pull approved generations
 
@@ -23,8 +28,14 @@ uv run weide pull-approved --full      # ignore the cursor, reconcile every publ
 
 The owner approves generations for publishing in the service (Lab UI or `publish-approval`, see the
 service's docs/API.md "Publishing"); `pull-approved` reads `GET /api/v1/publications` with the
-`publish`-scoped key and turns each publication into a published post of an existing character account
-(it never creates accounts; run `seed-characters` first). `video/mp4` becomes a reel, `image/png`,
+`publish`-scoped key and turns each publication into a published post of a character account
+(`seed-characters` creates the committed ones). When a publication names a character the database does
+not know and `HENHOUSE_CHARACTERS_DIR` is set, the account is created first from that character's
+`identity.md` front matter, allowlisted fields only: slug (the directory name), `name` (display name),
+`handle` (must be free), `kind` (animal, human, robot, other; `thing` maps to other) and `bio` (capped at
+150 characters). The markdown body is never read, the `avatar` id never copied, existing accounts are
+never changed, and the new account stays unlisted until its first post is published. Without the dir or
+a usable identity the item fails (and is retried next run). `video/mp4` becomes a reel, `image/png`,
 `image/jpeg` and `image/webp` an image post. Posts are matched by `generation:<public_id>` (the service
 exposes no run id), so reruns are idempotent: an unchanged item is skipped, a new caption, character or
 summary updates the post (it keeps its first post time). Media land in `media/gen/<public_id>.<ext>`

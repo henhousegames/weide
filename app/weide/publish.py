@@ -32,12 +32,17 @@ origin (media URLs on another host get no key) and is never printed: every error
 `_redact`. Settings come from the environment or from a gitignored `.env` in the private dir:
   HENHOUSE_SERVICE_URL   base URL of the service (scheme://host:port; a trailing /api/v1 is fine too)
   HENHOUSE_SERVICE_KEY   bearer key (scope `publish`)
+  HENHOUSE_CHARACTERS_DIR  optional: character identities (<slug>/identity.md, read-only). Default:
+                         <HENHOUSE_FEED_DIR>/../characters when HENHOUSE_FEED_DIR is set (as in the preview)
 
 Each publication becomes one post (status published: approval happened in the service) matched by
 source `generation:<public_id>` (the API exposes no run id, and the internal run id never reaches us),
 so a rerun never duplicates; caption/character/summary changes update it (keeping the first posted_at).
-`video/mp4` becomes a `reel`, `image/png|jpeg|webp` an `image` post. The character account must already
-exist. Media go to <media root>/gen/<public_id>.<ext> (sha256 from the list verified), a 540 px poster to
+`video/mp4` becomes a `reel`, `image/png|jpeg|webp` an `image` post. The character account must exist;
+with a characters dir configured, a missing one is created first from its identity.md front matter
+(characters.account_from_identity: allowlisted fields only, never the body or the avatar, existing
+accounts untouched, not listed until its first post is published). Without it, or without a usable
+identity, the item fails (and is retried). Media go to <media root>/gen/<public_id>.<ext> (sha256 from the list verified), a 540 px poster to
 <thumb root>/540/gen/<public_id>.jpg: the service poster (scaled with ffmpeg, or kept as is when it is a
 JPEG and ffmpeg is missing), else a frame of the media (ffmpeg; skipped without it).
 Start source: when the summary's whitelisted field `start_source` is "isaac-sim" (top level, already inherited
@@ -118,6 +123,7 @@ def read_dotenv(path: Path) -> dict[str, str]:
 class ServiceSettings:
     base_url: str
     key: str = field(repr=False)
+    characters_dir: Path | None = None     # identity.md files for characters missing in the database
 
     @classmethod
     def load(cls, dotenv: Path | None = None) -> "ServiceSettings":
@@ -132,7 +138,10 @@ class ServiceSettings:
                                "(environment or .env in the private dir)")
         if urlsplit(base).scheme not in ("http", "https"):
             raise PublishError(f"{config.ENV_PREFIX}SERVICE_URL must be an http(s) URL")
-        return cls(base.rstrip("/"), key)
+        chars, feed = get("CHARACTERS_DIR"), get("FEED_DIR")
+        chars_dir = Path(chars).expanduser().resolve() if chars else \
+            Path(feed).expanduser().resolve().parent / "characters" if feed else None
+        return cls(base.rstrip("/"), key, chars_dir)
 
 
 # --- service adapter -------------------------------------------------------------------------------
@@ -423,11 +432,42 @@ def _same(row: sqlite3.Row, fields: dict) -> bool:
                for k, v in fields.items())
 
 
+def _create_characters(con: sqlite3.Connection, root: Path | None, todo: list[tuple[int, Any]], *, dry_run: bool,
+                       res: dict, log: Callable[[str], None]) -> set[str]:
+    """Create the accounts of characters the publications name but the database lacks, from identity.md
+    in `root` (characters.account_from_identity). Returns the slugs a dry run would create. A slug whose
+    identity is missing or unusable is left alone: its items fail as an unknown character."""
+    planned: set[str] = set()
+    if root is None or not Path(root).is_dir():
+        return planned
+    from .characters import IdentityError, account_from_identity, identity_fields
+    slugs = {d["character"].lstrip("@") for _, d in todo if isinstance(d, dict) and isinstance(d.get("character"), str)}
+    for slug in sorted(slugs):
+        if con.execute("SELECT 1 FROM accounts WHERE slug=?", (slug,)).fetchone():
+            continue
+        try:
+            if dry_run:
+                identity_fields(root, slug)
+                planned.add(slug)
+                res["notes"].append(f"{slug}: character would be created from identity.md")
+                continue
+            account_from_identity(con, root, slug)
+            con.commit()
+        except (IdentityError, sqlite3.Error) as e:
+            con.rollback()
+            res["notes"].append(f"{slug}: character not created: {e}")
+            log(f"character {slug} not created: {e}")
+            continue
+        res["characters_created"].append(slug)
+        log(f"created character {slug} from identity.md")
+    return planned
+
+
 def _publish_item(con: sqlite3.Connection, client: ServiceClient, pub: Publication, *, dry_run: bool,
-                  media_root: Path, thumb_root: Path) -> tuple[str, bool]:
-    """Returns (new|updated|unchanged, poster_written)."""
+                  media_root: Path, thumb_root: Path, planned: set[str] = frozenset()) -> tuple[str, bool]:
+    """Returns (new|updated|unchanged, poster_written). `planned`: characters a dry run would create."""
     source = f"generation:{pub.public_id}"
-    aid = _character(con, pub.character)
+    aid = None if dry_run and pub.character.lstrip("@") in planned else _character(con, pub.character)
     clash = con.execute("SELECT source FROM posts WHERE public_id=?", (pub.public_id,)).fetchone()
     if clash and clash["source"] != source:
         raise PublishError(f"{pub.public_id}: public_id already belongs to another post")
@@ -591,7 +631,8 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
     since = since if isinstance(since, str) and since else None
     client = ServiceClient(settings, transport)
     res: dict[str, Any] = {"new": 0, "updated": 0, "unchanged": 0, "revoked": 0, "skipped": 0, "failed": [],
-                           "failed_ids": [], "listing_failed": False, "notes": [], "items": [], "dry_run": dry_run,
+                           "failed_ids": [], "listing_failed": False, "characters_created": [], "notes": [], "items": [],
+                           "dry_run": dry_run,
                            "incremental": since is not None, "full": since is None}
 
     def fail(msg: str, pid: Any = None) -> None:
@@ -609,6 +650,7 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
             fail(str(e))
             return res
         todo, revoked = _merge(raw_pubs, raw_revoked, fail)
+        planned = _create_characters(con, settings.characters_dir, todo, dry_run=dry_run, res=res, log=log)
         for n, d in todo:
             if audio_only(d):                  # not planned as posts: skip, no failure (the cursor moves on)
                 pid = d.get("public_id")
@@ -624,7 +666,7 @@ def pull_approved(con: sqlite3.Connection, settings: ServiceSettings, *, dry_run
                 continue
             try:
                 status, poster = _publish_item(con, client, pub, dry_run=dry_run, media_root=media_root,
-                                               thumb_root=thumb_root)
+                                               thumb_root=thumb_root, planned=planned)
             except (PublishError, ValueError, OSError, sqlite3.Error) as e:
                 con.rollback()
                 fail(f"{pub.public_id}: {e}" if not str(e).startswith(pub.public_id) else str(e), pub.public_id)
