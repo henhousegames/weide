@@ -7,8 +7,14 @@
 // Reactions are disabled: the preview is read-only.
 (function () {
   "use strict";
-  const previews = new Map();          // card id -> preview info
-  const remember = (card) => { if (card && card.preview) previews.set(String(card.id), card.preview); };
+  const previews = new Map();          // card id -> preview info (drafts / approvals: ENTWURF pill etc.)
+  const labs = new Map();              // card id -> Lab run page (every card that has one: "…" menu)
+  const remember = (card) => {
+    if (!card || card.id === undefined) return;
+    if (card.preview) previews.set(String(card.id), card.preview);
+    const lab = card.lab_url || (card.preview && card.preview.lab_url);
+    if (typeof lab === "string" && /^https?:\/\//i.test(lab)) labs.set(String(card.id), lab);
+  };
   const TASKS = { t2i: "Text → Bild", i2i: "Bild → Bild", t2v: "Text → Video", i2v: "Bild → Video" };
   const SHORT = { draft: "Entwurf", approved: "Freigegeben" };
   const SIM_NOTE = "Startbild aus eigener Simulation";
@@ -113,11 +119,52 @@
     return m ? decodeURIComponent(m[1]) : null;
   }
 
+  // "…" on the action rail of a feed card: a small menu with the Lab link
+  function moreMenu(lab) {
+    const wrap = el("div", "pv-more");
+    const btn = el("button", "react pv-more__btn",
+      el("span", "react__e", "…"), el("span", "react__n", "Mehr"));
+    btn.type = "button";
+    btn.setAttribute("aria-label", "Mehr");
+    btn.setAttribute("aria-haspopup", "true");
+    btn.setAttribute("aria-expanded", "false");
+    const menu = el("div", "pv-more__menu");
+    menu.hidden = true;
+    const link = labLink({ lab_url: lab }, "pv-more__item", "Im Lab öffnen ↗");
+    menu.append(link);
+    const set = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      set(menu.hidden);
+      if (!menu.hidden) link.focus();
+    });
+    document.addEventListener("click", (ev) => { if (!wrap.contains(ev.target)) set(false); });
+    wrap.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { set(false); btn.focus(); } });
+    wrap.append(btn, menu);
+    return wrap;
+  }
+
   function decorate(article) {
     if (article.dataset.pv) return;
     const id = idOf(article);
+    const lab = id && labs.get(id);
+    if (lab && !article.dataset.pvMore && !article.classList.contains("postpage")) {
+      const rail = article.querySelector(".reacts--rail");
+      if (rail) { rail.append(moreMenu(lab)); article.dataset.pvMore = "1"; }
+    }
     const p = id && previews.get(id);
-    if (!p) return;
+    if (!p) {
+      // curated feed post page: the Lab link under the post (feed cards carry no preview info)
+      const body = lab && article.classList.contains("postpage") && !article.dataset.pvMore
+        && article.querySelector(".postpage__body");
+      if (body) {
+        const a = labLink({ lab_url: lab }, "pv-lab pv-lab--quiet", "Im Lab öffnen");
+        a.append(el("span", "pv-lab__arrow", "↗"));
+        body.append(a);
+        article.dataset.pvMore = "1";
+      }
+      return;
+    }
     article.dataset.pv = p.state;
     article.classList.add("pv-card", `pv-card--${p.state}`);
     const media = article.querySelector(".post__frame, .postpage__media .media, .media, .textpost");

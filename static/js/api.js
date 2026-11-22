@@ -59,6 +59,7 @@ const staticApi = {
       throw e;
     }
   },
+  stories: () => Promise.reject(new ApiError(404)),             // derived client-side from the feed
   react: () => Promise.reject(new ApiError(0, "static snapshot")),
 };
 
@@ -71,6 +72,7 @@ const liveApi = {
   accounts: () => get("/api/accounts"),
   account: (slug) => get(`/api/accounts/${encodeURIComponent(slug)}`),
   top: (params) => get(`/api/top?${new URLSearchParams(params)}`),
+  stories: () => get("/api/preview/stories"),                 // private preview only (404 elsewhere)
   async react(id, type) {
     const r = await fetch(`/api/posts/${id}/react`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type }),

@@ -317,7 +317,7 @@ def test_frontend_sources_build_credits_safely():
     pv = (REPO / "app/weide/preview_static/preview.js").read_text(encoding="utf-8")
     body = ui[ui.index("export function genCredits"):ui.index("export const disclaimer")]
     assert "innerHTML" not in body and 'rel: "noopener noreferrer"' in body
-    assert ui.count("genCredits(post.generation?.credits)") == 2                     # visual + text feed card
+    assert ui.count("genCredits(post.generation?.credits)") == 1                     # one slide overlay: visual + text
     assert "genCredits(p.generation?.credits)" in views and "genCredits(credits, { detail: true })" in views
     assert "innerHTML" not in pv and "function credits(p)" in pv and "credits(p)]" in pv
     assert 'noopener noreferrer' in pv and "/^https?:" in pv

@@ -41,7 +41,8 @@
 
 /* read-only: reactions are shown, never pressed */
 .pv .react { pointer-events: none; }
-.pv .reacts:not(.reacts--rail) .react { opacity: .55; }
+.pv .reacts:not(.reacts--rail) .react:not(.react--share) { opacity: .55; }
+.pv .react--comments, .pv .react--share { pointer-events: auto; }
 
 /* draft detail (#/p/vs-<id>): media, then the panel; no reactions, comments or ranking */
 .pv-detail .postpage__body > :not(.pv-panel):not(.caption),
@@ -72,12 +73,41 @@
   .pv-panel { padding: 18px 0 0; max-width: 560px; }
 }
 
-/* preview cards have no reactions yet: no empty counter column, the caption gets the full width */
-.pv-card .reacts--rail { display: none; }
-.pv-card .post__overlay { right: 0; padding-right: 14px; }
+/* draft / approval cards have no reactions yet: only comments and the "…" menu stay on the rail */
+.pv-card .reacts--rail > .react:not(.react--comments):not(.pv-more__btn) { display: none; }
+
+/* "…" menu on the action rail (Lab link) */
+.pv-more { position: relative; display: flex; flex-direction: column; align-items: center; }
+.pv-more__btn .react__e { font-size: 22px; font-weight: 800; letter-spacing: .02em; line-height: 0; padding-bottom: 8px; }
+.pv-more__menu {
+  position: absolute; right: calc(100% + 6px); bottom: 0; z-index: 5; min-width: 170px; padding: 6px;
+  border-radius: 14px; background: var(--ground-2, #1f4430); box-shadow: 0 10px 30px -8px rgba(0, 0, 0, .6), inset 0 0 0 1px var(--line, #2f5a41);
+}
+.pv-more__menu[hidden] { display: none; }
+.pv-more__item {
+  display: block; padding: 9px 12px; border-radius: 10px; color: var(--ink, #eef3e6); text-decoration: none;
+  font: 650 14px/1.2 var(--font, system-ui, sans-serif); white-space: nowrap; text-shadow: none;
+}
+.pv-more__item:hover, .pv-more__item:focus-visible { background: var(--ground-3, #275238); }
+.pv .pv-more .react { pointer-events: auto; }
+.pv-lab--quiet { background: var(--ground-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
 
 /* "Startbild aus eigener Simulation" next to the model in the draft detail and on cards */
 .pv-facts dd .gen-note { margin-left: 8px; }
 .pv-note-line { margin: 4px 16px 0; }
 .pv-facts dd .gen-credits { margin: 3px 0 0; font-weight: 500; }
 .pv-note-line + .gen-credits, .post--text .gen-credits { margin-left: 4px; }
+
+/* full-screen feed under the fixed PREVIEW bar */
+:root.pv { --slide-h: calc(100vh - var(--nav-h) - var(--pv-h)); scroll-padding-top: var(--pv-h); }
+@supports (height: 100dvh) { :root.pv { --slide-h: calc(100dvh - var(--nav-h) - var(--pv-h)); } }
+.pv .worlds { top: var(--pv-h); }
+.post__frame > .pv-tags { top: calc(var(--worlds-h, 48px) + 10px); }
+@media (min-width: 1024px) {
+  :root.pv { --slide-h: calc(100vh - 32px - var(--pv-h)); }
+  @supports (height: 100dvh) { :root.pv { --slide-h: calc(100dvh - 32px - var(--pv-h)); } }
+  .pv .worlds { top: calc(16px + var(--pv-h)); }
+}
+@media (max-width: 1023px) {
+  .pv[data-view="feed"] .topbar { top: 0; }    /* the feed's top bar scrolls away (not sticky) */
+}

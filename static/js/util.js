@@ -53,7 +53,42 @@ export const icons = {
   comment: () => svg(["M4 5h16v11H9l-5 4z"]),
   soundOff: () => svg(["M4 9h4l5-4v14l-5-4H4z", "M17 9l4 6M21 9l-4 6"]),
   soundOn: () => svg(["M4 9h4l5-4v14l-5-4H4z", "M16.5 8.5a5 5 0 0 1 0 7", "M19 6a8.5 8.5 0 0 1 0 12"]),
+  share: () => svg(["M12 3v12", "M7.5 7.5 12 3l4.5 4.5", "M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"]),
+  more: () => svg(["M5 12h.01M12 12h.01M19 12h.01"]),
+  play: () => svg(["M8 5v14l11-7z"]),
+  grid: () => svg(["M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"]),
 };
+
+// Canonical, absolute link of a post: the page URL without its hash + "#/p/<id>" (works under any
+// sub-path of the static site and on the preview host).
+export function postLink(id, base = (typeof location !== "undefined" ? location.href : "")) {
+  return `${String(base).split("#")[0]}#/p/${encodeURIComponent(String(id))}`;
+}
+
+// Share a post: the system share sheet where there is one, else copy the link (small toast either way).
+export async function sharePost(id, title) {
+  const url = postLink(id);
+  if (typeof navigator !== "undefined" && navigator.share) {
+    try {
+      await navigator.share({ url, title: title || document.title });
+      return "shared";
+    } catch (e) {
+      if (e?.name === "AbortError") return "aborted";
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Link kopiert");
+    return "copied";
+  } catch {
+    toast(url);
+    return "shown";
+  }
+}
+
+// prefers-reduced-motion: no autoplay, no animated transitions
+export const reducedMotion = () => Boolean(typeof window !== "undefined" && window.matchMedia
+  && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
 const nf = new Intl.NumberFormat("de-DE");
 // Same text as config.DISCLAIMER; /api/meta sends it, but older static data/meta.json files do not.
@@ -102,15 +137,16 @@ export function store(key, value) {
 }
 
 export function toast(text) {
+  for (const old of document.querySelectorAll(".toast")) old.remove();
   const t = h("div", { class: "toast", role: "status" }, text);
   document.body.append(t);
   setTimeout(() => t.remove(), 1800);
 }
 
-export async function copy(text) {
+export async function copy(text, done = "Befehl kopiert") {
   try {
     await navigator.clipboard.writeText(text);
-    toast("Befehl kopiert");
+    toast(done);
   } catch {
     toast("Kopieren nicht möglich – bitte markieren");
   }

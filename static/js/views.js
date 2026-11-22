@@ -12,20 +12,60 @@ export function notFound(root, text) {
     h("a", { class: "notfound__link", href: "#/" }, "Zum Feed")));
 }
 
-// Feed worlds (#/w/<world>): filter by the posting account's kind. "Alle" is the plain feed (#/).
+// Feed worlds (#/w/<world>): filter by the posting account's kind. "Für dich" is the plain feed (#/).
 // English and legacy names are accepted as aliases; "mixed"/"alle" mean everything.
 export const WORLDS = [
-  { key: "", label: "Alle", kinds: null },
-  { key: "tiere", label: "Tiere", kinds: ["animal"] },
+  { key: "", label: "Für dich", kinds: null },
+  { key: "tiere", label: "Weide", kinds: ["animal"] },
   { key: "menschen", label: "Menschen", kinds: ["human"] },
   { key: "roboter", label: "Roboter", kinds: ["robot"] },
+  { key: "dinge", label: "Dinge", kinds: ["other", "thing"] },
 ];
-const WORLD_ALIASES = { alle: "", all: "", mixed: "", animals: "tiere", weide: "tiere", humans: "menschen", robots: "roboter" };
+const WORLD_ALIASES = { alle: "", all: "", mixed: "", animals: "tiere", weide: "tiere", humans: "menschen", robots: "roboter",
+  things: "dinge", objekte: "dinge", other: "dinge" };
 
+// the tab bar over the full-screen feed
 function worldNav(current) {
   return h("nav", { class: "worlds", "aria-label": "Welten" }, WORLDS.map((w) => h("a", {
     class: "worlds__item", href: w.key ? `#/w/${w.key}` : "#/", "aria-current": w.key === current ? "page" : null,
   }, w.label)));
+}
+
+// --- story rings -------------------------------------------------------------------------------------
+// A row of creators; a ring marks who posted today (tap: their newest post), the others link to their
+// profile. Rings: the preview's /api/preview/stories ({day, items: [{account, post_ids, ...}]}, newest
+// first) when it answers, else derived from the newest feed posts (posted_at on meta.today).
+
+const firstName = (name) => String(name || "").split("|")[0].trim();
+
+export function storiesFrom(rings, items, { today = state.meta?.today, kinds = null } = {}) {
+  const out = new Map();
+  for (const s of Array.isArray(rings) ? rings : []) {
+    const acc = s?.account;
+    if (!acc?.slug || out.has(acc.slug) || (kinds && !kinds.includes(acc.kind))) continue;
+    const ids = Array.isArray(s.post_ids) ? s.post_ids : [];
+    out.set(acc.slug, { account: acc, latest: ids.length ? ids[0] : null, ring: true });
+  }
+  const derive = !Array.isArray(rings);
+  for (const p of items || []) {
+    const acc = p.account;
+    if (!acc?.slug || acc.kind === "follower" || out.has(acc.slug)) continue;
+    out.set(acc.slug, { account: acc, latest: p.id, ring: derive && Boolean(today && String(p.posted_at || "").slice(0, 10) === today) });
+  }
+  return [...out.values()].sort((x, y) => Number(y.ring) - Number(x.ring));
+}
+
+export function storyRow(stories) {
+  if (!stories.length) return null;
+  return h("section", { class: "stories", "aria-label": "Creator" },
+    h("ul", { class: "stories__list" }, stories.slice(0, 16).map((s) => h("li", {},
+      h("a", {
+        class: `story${s.ring ? " story--new" : ""}`,
+        href: s.ring && s.latest != null ? `#/p/${encodeURIComponent(s.latest)}` : `#/u/${encodeURIComponent(s.account.slug)}`,
+        "aria-label": s.ring ? `${s.account.display_name}: neuer Post heute` : `Profil von ${s.account.display_name}`,
+      },
+      h("span", { class: "story__ring" }, avatar(s.account, 56, false)),
+      h("span", { class: "story__name" }, firstName(s.account.display_name)))))));
 }
 
 export async function feedView(root, worldArg) {
@@ -36,26 +76,42 @@ export async function feedView(root, worldArg) {
     e.status = 404;
     throw e;
   }
+  const head = h("div", { class: "feed__head" });
   const list = h("div", { class: "feed" });
   const sentinel = h("div", { class: "sentinel" });
-  mount(root, worldNav(world.key), list, sentinel);
+  mount(root, worldNav(world.key), head, list, sentinel);
   let offset = 0;
   let loading = false;
   async function more() {
     if (loading || offset === null) return;
     loading = true;
-    const page = await api.feed(offset, PAGE, world.kinds);
-    if (!page.items.length && offset === 0) {
-      list.append(h("p", { class: "empty empty--pad" }, world.key === "roboter"
-        ? "Noch keine Posts. Die Roboter laden noch." : "Noch keine Posts. Die Creator schlafen noch."));
+    try {
+      const page = await api.feed(offset, PAGE, world.kinds);
+      if (!page.items.length && offset === 0) {
+        list.append(h("div", { class: "slide slide--empty" }, h("p", { class: "empty empty--pad" }, world.key === "roboter"
+          ? "Noch keine Posts. Die Roboter laden noch." : "Noch keine Posts. Die Creator schlafen noch.")));
+      }
+      list.append(...page.items.map(postCard));
+      offset = page.next_offset ?? null;
+      if (offset === null) sentinel.remove();
+    } finally {
+      loading = false;
     }
-    list.append(...page.items.map(postCard));
-    offset = page.next_offset;
-    loading = false;
-    if (offset === null) sentinel.remove();
   }
   await more();
-  const io = new IntersectionObserver((e) => { if (e[0].isIntersecting) more(); }, { rootMargin: "1200px 0px" });
+  // story rings: never block or break the feed
+  const preview = document.documentElement?.classList?.contains("pv");
+  Promise.all([api.feed(0, 40, world.kinds), preview ? api.stories().catch(() => null) : null])
+    .then(([page, rings]) => {
+      const row = storyRow(storiesFrom(rings?.items, page.items, { kinds: world.kinds }));
+      if (row) head.append(row);
+    })
+    .catch(() => {});
+  // re-observe after each page: a sentinel that stays in range would not report again
+  const io = new IntersectionObserver((e) => {
+    if (!e[e.length - 1].isIntersecting) return;
+    more().then(() => { if (offset !== null) { io.unobserve(sentinel); io.observe(sentinel); } }).catch(() => {});
+  }, { rootMargin: "200% 0px" });
   io.observe(sentinel);
   return () => io.disconnect();
 }
@@ -75,11 +131,11 @@ function commentNode(c) {
         h("a", { class: "comment__name", href: `#/u/${encodeURIComponent(c.account.slug)}` }, c.account.display_name),
         h("time", { class: "comment__time", datetime: c.created_at }, when(c.created_at))),
       h("p", { class: "comment__text" }, c.text),
-      c.replies.length ? h("ul", { class: "comment__replies" }, c.replies.map(commentNode)) : null));
+      c.replies?.length ? h("ul", { class: "comment__replies" }, c.replies.map(commentNode)) : null));
 }
 
 function likedBy(p) {
-  const hearts = p.reactions.heart || 0;
+  const hearts = p.reactions?.heart || 0;
   if (p.uwe_reacted) {
     const others = Math.max(0, hearts - 1);
     return h("p", { class: "liked-by" }, h("a", { href: "#/u/uwe" }, "Uwe"),
@@ -122,9 +178,9 @@ export async function postView(root, id) {
         genCredits(p.generation?.credits),
         robotNote(p),
         moments,
-        h("section", { class: "block" },
+        h("section", { class: "block comments-block", id: "comments" },
           h("h2", {}, n ? plural(n, "Kommentar", "Kommentare") : "Kommentare"),
-          p.comments.length ? h("ul", { class: "comments" }, p.comments.map(commentNode))
+          p.comments?.length ? h("ul", { class: "comments" }, p.comments.map(commentNode))
             : h("p", { class: "empty" }, "Noch keine Kommentare. Uwe ist bestimmt gleich da.")),
         h("details", { class: "more" }, h("summary", {}, "Quelle und Ranking"),
           h("dl", { class: "facts" }, facts.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))))),
@@ -222,6 +278,7 @@ export async function generationView(root, publicId) {
 
 export async function profileView(root, slug) {
   const a = await api.account(slug);
+  const posts = Array.isArray(a.posts) ? a.posts : [];
   const sections = [];
   if (a.about?.length || a.facts) {
     sections.push(h("section", { class: "block" }, h("h2", {}, "Über mich"),
@@ -244,31 +301,51 @@ export async function profileView(root, slug) {
         return h("li", {}, r.account ? h("a", { class: "rel", href: `#/u/${encodeURIComponent(r.slug)}` }, inner) : h("div", { class: "rel" }, inner));
       }))));
   }
-  const grid = h("div", { class: "grid" }, a.posts.map((p) => h("a", { href: `#/p/${p.id}`, "aria-label": p.caption || "Post" },
-    p.poster_url ? h("img", { src: p.poster_url, alt: "", loading: "lazy" }) : h("div", { class: "grid__text" }, p.caption || ""),
-    h("span", { class: "grid__count" }, "😂 ", compact(p.reactions?.lol || 0)))));
+  // 3-column square grid: poster (video/image) or the text itself; tap opens the post
+  const grid = h("ul", { class: "grid" }, posts.map((p) => h("li", {}, h("a", {
+    class: `grid__item${p.media_kind === "video" ? " grid__item--video" : ""}`, href: `#/p/${encodeURIComponent(p.id)}`,
+    "aria-label": p.caption ? `Post: ${p.caption.slice(0, 80)}` : "Post",
+  },
+  p.poster_url ? h("img", { src: p.poster_url, alt: "", loading: "lazy" }) : h("span", { class: "grid__text" }, p.caption || ""),
+  p.media_kind === "video" ? h("span", { class: "grid__kind", "aria-hidden": "true" }, icons.play()) : null,
+  h("span", { class: "grid__count" }, "😂 ", compact(p.reactions?.lol || 0))))));
   const emptyPosts = a.kind === "house"
     ? h("div", { class: "empty-card" },
       h("p", {}, "Noch keine Sammlung. Die erste kommt am Sonntag."),
       h("a", { class: "pill", href: "#/woche" }, "Bis dahin: Diese Woche", icons.next()))
     : h("p", { class: "empty" }, "Noch keine Posts.");
+  // counts: posts always; followers/following only where the data has them (never invented here)
+  const count = (n, label) => (typeof n === "number" ? h("li", {}, h("b", {}, compact(n)), h("span", {}, label)) : null);
+  const av = avatar(a, 88, false);
+  av.className += " profile__avatar";
   mount(root,
     h("div", { class: "profilepage" },
-      h("div", { class: "profilepage__info" },
-        h("div", { class: "profile" },
-          h("div", { class: "profile__top" },
-            avatar(a, 92, false),
-            h("div", { class: "profile__id" }, h("h1", { class: "profile__name" }, a.display_name), earTag(a, { link: false }))),
-          a.bio ? h("p", { class: "profile__bio" }, a.bio) : null,
+      h("header", { class: "profile" },
+        h("div", { class: "profile__top" },
+          h("span", { class: "profile__ring" }, av),
           h("ul", { class: "stats" },
-            h("li", {}, h("b", {}, compact(a.followers)), h("span", {}, "Follower")),
-            h("li", {}, h("b", {}, num(a.posts.length)), h("span", {}, "Posts")),
-            h("li", {}, h("b", {}, num(a.following)), h("span", {}, "folgt"))),
-          a.followers_note ? h("p", { class: "stats__note" }, a.followers_note) : null),
-        ...sections),
-      h("section", { class: "block profilepage__posts" }, h("h2", {}, "Posts"), a.posts.length ? grid : emptyPosts)),
+            count(typeof a.post_count === "number" ? a.post_count : posts.length, "Posts"),
+            count(a.followers ?? a.follower_count, "Follower"),
+            count(a.following ?? a.following_count, "folgt"))),
+        h("div", { class: "profile__id" },
+          h("h1", { class: "profile__name" }, a.display_name), earTag(a, { link: false })),
+        a.bio ? h("p", { class: "profile__bio" }, a.bio) : null,
+        a.followers_note ? h("p", { class: "stats__note" }, a.followers_note) : null,
+        h("div", { class: "profile__actions" },
+          h("button", { class: "pill", type: "button", onclick: () => shareProfile(a) }, icons.share(), "Profil teilen"),
+          h("a", { class: "pill", href: "#/leute" }, "Leute"))),
+      h("section", { class: "profilepage__posts", "aria-label": "Posts" },
+        h("h2", { class: "profilepage__tab" }, icons.grid(), h("span", {}, "Posts")),
+        posts.length ? grid : h("div", { class: "profilepage__empty" }, emptyPosts)),
+      sections.length ? h("details", { class: "profile__more" },
+        h("summary", {}, `Mehr über ${firstName(a.display_name)}`), ...sections) : null),
   );
-  root.querySelector(".profile .avatar")?.classList.add("profile__avatar");
+}
+
+function shareProfile(a) {
+  const url = `${location.href.split("#")[0]}#/u/${encodeURIComponent(a.slug)}`;
+  if (navigator.share) { navigator.share({ url, title: a.display_name }).catch(() => {}); return; }
+  copy(url, "Link kopiert");
 }
 
 // --- leaderboards --------------------------------------------------------------------------------
