@@ -162,6 +162,91 @@ def feed_page(con: sqlite3.Connection, limit: int, offset: int, *, account: str 
     return {"items": post_dicts(con, rows[:limit]), "next_offset": offset + limit if len(rows) > limit else None}
 
 
+def post_payload(con: sqlite3.Connection, post_id: str | int) -> dict:
+    """/api/posts/<id>: a published post with comments, moments and parent. LookupError when not visible."""
+    pid = resolve_post(con, post_id, published_only=True)
+    row = con.execute(POST_SQL + " WHERE p.id = ?", (pid,)).fetchone()
+    item = post_dicts(con, [row])[0]
+    item["comments"] = threaded_comments(con, pid)
+    moments = con.execute(POST_SQL + f" WHERE p.parent_id = ? AND {PUBLISHED} "
+                          "ORDER BY COALESCE(p.funny_score,0) DESC, p.id", (pid,)).fetchall()
+    item["moments"] = post_dicts(con, moments)
+    if row["parent_id"]:
+        parent = con.execute(POST_SQL + f" WHERE p.id = ? AND {PUBLISHED}", (row["parent_id"],)).fetchone()
+        item["parent"] = post_dicts(con, [parent])[0] if parent else None
+    uwe = con.execute("SELECT 1 FROM reactions r JOIN accounts a ON a.id=r.account_id "
+                      "WHERE r.post_id=? AND a.slug='uwe' LIMIT 1", (pid,)).fetchone()
+    item["uwe_reacted"] = bool(uwe)
+    return item
+
+
+def meta_payload(con: sqlite3.Connection) -> dict:
+    """/api/meta (the preview's curated feed adds its post count on top)."""
+    d = today()
+    n = con.execute(f"SELECT COUNT(*) FROM posts p WHERE p.parent_id IS NULL AND {PUBLISHED}").fetchone()[0]
+    return {
+        "app_name": config.APP_NAME, "tagline": config.APP_TAGLINE, "disclaimer": config.DISCLAIMER, "today": d.isoformat(), "week": iso_week(d),
+        "reactions": [{"key": k, **{kk: v[kk] for kk in ("label", "emoji")}} for k, v in config.REACTIONS.items()],
+        "posts": n,
+        "cli": "uv run weide",
+        "ranking": {"curated_weight": config.CURATED_WEIGHT, "uncurated_max": config.UNCURATED_MAX,
+                    "score_max": config.SCORE_MAX, "comment_weight": config.COMMENT_WEIGHT,
+                    "engagement_ref": config.ENGAGEMENT_REF,
+                    "weights": {k: v["weight"] for k, v in config.REACTIONS.items()}},
+    }
+
+
+def account_items(con: sqlite3.Connection, kind: str | None, all_accounts: bool) -> list[dict]:
+    """/api/accounts items: account brief + bio, followers and the number of published top-level posts."""
+    q = ("SELECT a.*, (SELECT COUNT(*) FROM posts p WHERE p.account_id=a.id AND p.parent_id IS NULL "
+         f"AND {PUBLISHED}) posts FROM accounts a")
+    args: list[Any] = []
+    where = [] if all_accounts else [visible("a")]
+    kinds = _csv(kind)
+    if kinds:
+        where.append(f"a.kind IN ({','.join('?' * len(kinds))})")
+        args += kinds
+    if where:
+        q += " WHERE " + " AND ".join(where)
+    q += (" ORDER BY CASE a.kind WHEN 'animal' THEN 0 WHEN 'human' THEN 1 WHEN 'robot' THEN 2 "
+          "WHEN 'other' THEN 3 WHEN 'house' THEN 4 ELSE 5 END, a.followers DESC, a.id")
+    rows = con.execute(q, args).fetchall()
+    return [{**account_brief(r), "bio": r["bio"], "followers": r["followers"], "posts": r["posts"]} for r in rows]
+
+
+def account_payload(con: sqlite3.Connection, slug: str, all_accounts: bool) -> dict | None:
+    """/api/accounts/<slug> (slug or handle), or None when there is no such (visible) account."""
+    r = con.execute("SELECT * FROM accounts a WHERE (slug = ? OR handle = ? OR handle = ?)"
+                    + ("" if all_accounts else f" AND {visible('a')}"),
+                    (slug.lstrip("@"), slug, "@" + slug.lstrip("@"))).fetchone()
+    if not r:
+        return None
+    prof = jload(r["profile_json"], {}) or {}
+    # Only the in-world profile is shown; writer-facing keys never leave the server.
+    inworld = prof.get("inworld") or {}
+    people = []
+    for e in inworld.get("leute") or []:
+        o = con.execute("SELECT * FROM accounts a WHERE slug = ?"
+                        + ("" if all_accounts else f" AND {visible('a')}"), (e["slug"],)).fetchone()
+        # a hidden account is rendered like an unknown one: brief null (views.js shows it unlinked)
+        people.append({"slug": e["slug"], "text": e["text"], "account": account_brief(o) if o else None})
+    following = con.execute("SELECT COUNT(*) FROM follows WHERE follower_id=?", (r["id"],)).fetchone()[0]
+    if not following:
+        following = int(prof.get("public_following") or 0)      # imported count, edges unknown
+    posts = con.execute(POST_SQL + f" WHERE p.account_id=? AND p.parent_id IS NULL AND {PUBLISHED} "
+                        "ORDER BY p.ts DESC", (r["id"],)).fetchall()
+    return {
+        **account_brief(r), "bio": r["bio"], "followers": r["followers"], "followers_note": r["followers_note"],
+        "following": following,
+        "about": inworld.get("ueber_mich") or [],
+        "facts": inworld.get("steckbrief"),
+        "values": inworld.get("werte") or [],
+        "day": inworld.get("mein_tag") or [],
+        "people": people,
+        "posts": post_dicts(con, posts),
+    }
+
+
 class ReactBody(BaseModel):
     type: str
 
@@ -201,19 +286,8 @@ def create_app(db_path: str | Path | None = None, *, readonly: bool = False, all
 
     @app.get("/api/meta")
     def meta() -> dict:
-        d = today()
         with db() as con:
-            n = con.execute(f"SELECT COUNT(*) FROM posts p WHERE p.parent_id IS NULL AND {PUBLISHED}").fetchone()[0]
-        return {
-            "app_name": config.APP_NAME, "tagline": config.APP_TAGLINE, "disclaimer": config.DISCLAIMER, "today": d.isoformat(), "week": iso_week(d),
-            "reactions": [{"key": k, **{kk: v[kk] for kk in ("label", "emoji")}} for k, v in config.REACTIONS.items()],
-            "posts": n,
-            "cli": "uv run weide",
-            "ranking": {"curated_weight": config.CURATED_WEIGHT, "uncurated_max": config.UNCURATED_MAX,
-                        "score_max": config.SCORE_MAX, "comment_weight": config.COMMENT_WEIGHT,
-                        "engagement_ref": config.ENGAGEMENT_REF,
-                        "weights": {k: v["weight"] for k, v in config.REACTIONS.items()}},
-        }
+            return meta_payload(con)
 
     @app.get("/api/feed")
     def feed(limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0), account: str | None = None,
@@ -226,22 +300,9 @@ def create_app(db_path: str | Path | None = None, *, readonly: bool = False, all
     def post_detail(post_id: str) -> dict:
         with db() as con:
             try:
-                pid = resolve_post(con, post_id, published_only=True)
+                return post_payload(con, post_id)
             except LookupError as e:
                 raise HTTPException(404, str(e)) from e
-            row = con.execute(POST_SQL + " WHERE p.id = ?", (pid,)).fetchone()
-            item = post_dicts(con, [row])[0]
-            item["comments"] = threaded_comments(con, pid)
-            moments = con.execute(POST_SQL + f" WHERE p.parent_id = ? AND {PUBLISHED} "
-                                  "ORDER BY COALESCE(p.funny_score,0) DESC, p.id", (pid,)).fetchall()
-            item["moments"] = post_dicts(con, moments)
-            if row["parent_id"]:
-                parent = con.execute(POST_SQL + f" WHERE p.id = ? AND {PUBLISHED}", (row["parent_id"],)).fetchone()
-                item["parent"] = post_dicts(con, [parent])[0] if parent else None
-            uwe = con.execute("SELECT 1 FROM reactions r JOIN accounts a ON a.id=r.account_id "
-                              "WHERE r.post_id=? AND a.slug='uwe' LIMIT 1", (pid,)).fetchone()
-            item["uwe_reacted"] = bool(uwe)
-        return item
 
     @app.post("/api/posts/{post_id}/react")
     def react(post_id: int, body: ReactBody) -> dict:
@@ -274,54 +335,15 @@ def create_app(db_path: str | Path | None = None, *, readonly: bool = False, all
     @app.get("/api/accounts")
     def accounts(kind: str | None = None) -> dict:
         with db() as con:
-            q = ("SELECT a.*, (SELECT COUNT(*) FROM posts p WHERE p.account_id=a.id AND p.parent_id IS NULL "
-                 f"AND {PUBLISHED}) posts FROM accounts a")
-            args: list[Any] = []
-            where = [] if all_accounts else [visible("a")]
-            kinds = _csv(kind)
-            if kinds:
-                where.append(f"a.kind IN ({','.join('?' * len(kinds))})")
-                args += kinds
-            if where:
-                q += " WHERE " + " AND ".join(where)
-            q += (" ORDER BY CASE a.kind WHEN 'animal' THEN 0 WHEN 'human' THEN 1 WHEN 'robot' THEN 2 "
-                  "WHEN 'other' THEN 3 WHEN 'house' THEN 4 ELSE 5 END, a.followers DESC, a.id")
-            rows = con.execute(q, args).fetchall()
-        return {"items": [{**account_brief(r), "bio": r["bio"], "followers": r["followers"], "posts": r["posts"]}
-                          for r in rows]}
+            return {"items": account_items(con, kind, all_accounts)}
 
     @app.get("/api/accounts/{slug}")
     def account(slug: str) -> dict:
         with db() as con:
-            r = con.execute("SELECT * FROM accounts a WHERE (slug = ? OR handle = ? OR handle = ?)"
-                            + ("" if all_accounts else f" AND {visible('a')}"),
-                            (slug.lstrip("@"), slug, "@" + slug.lstrip("@"))).fetchone()
-            if not r:
-                raise HTTPException(404, f"no account {slug!r}")
-            prof = jload(r["profile_json"], {}) or {}
-            # Only the in-world profile is shown; writer-facing keys never leave the server.
-            inworld = prof.get("inworld") or {}
-            people = []
-            for e in inworld.get("leute") or []:
-                o = con.execute("SELECT * FROM accounts a WHERE slug = ?"
-                                + ("" if all_accounts else f" AND {visible('a')}"), (e["slug"],)).fetchone()
-                # a hidden account is rendered like an unknown one: brief null (views.js shows it unlinked)
-                people.append({"slug": e["slug"], "text": e["text"], "account": account_brief(o) if o else None})
-            following = con.execute("SELECT COUNT(*) FROM follows WHERE follower_id=?", (r["id"],)).fetchone()[0]
-            if not following:
-                following = int(prof.get("public_following") or 0)      # imported count, edges unknown
-            posts = con.execute(POST_SQL + f" WHERE p.account_id=? AND p.parent_id IS NULL AND {PUBLISHED} "
-                                "ORDER BY p.ts DESC", (r["id"],)).fetchall()
-            return {
-                **account_brief(r), "bio": r["bio"], "followers": r["followers"], "followers_note": r["followers_note"],
-                "following": following,
-                "about": inworld.get("ueber_mich") or [],
-                "facts": inworld.get("steckbrief"),
-                "values": inworld.get("werte") or [],
-                "day": inworld.get("mein_tag") or [],
-                "people": people,
-                "posts": post_dicts(con, posts),
-            }
+            out = account_payload(con, slug, all_accounts)
+        if out is None:
+            raise HTTPException(404, f"no account {slug!r}")
+        return out
 
     @app.get("/api/top")
     def top_api(day: str | None = None, week: str | None = None, since: str | None = None, until: str | None = None,
