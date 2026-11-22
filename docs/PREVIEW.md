@@ -57,7 +57,8 @@ HENHOUSE_PREVIEW_HOSTS=127.0.0.1,<tailscale-ip>
 HENHOUSE_SERVICE_URL=http://<service-host>:18500
 HENHOUSE_REVIEW_KEY=<read-only review key>
 # optional: HENHOUSE_PREVIEW_PORT=18510, HENHOUSE_DB=<path>, HENHOUSE_PREVIEW_KEY_FILE,
-#           HENHOUSE_PREVIEW_CONFIG, HENHOUSE_PREVIEW_LINKS_FILE
+#           HENHOUSE_PREVIEW_CONFIG, HENHOUSE_PREVIEW_LINKS_FILE,
+#           HENHOUSE_FEED_DIR, HENHOUSE_CHARACTERS_DIR (curated feed, see below)
 ```
 
 Without `HENHOUSE_SERVICE_URL` / `HENHOUSE_REVIEW_KEY` the preview shows published posts only.
@@ -82,3 +83,68 @@ docs/API.md, "Review (private preview)") is handled in `app/weide/review.py` (`R
 `ReviewItem.parse`). The service is polled every 60 s for what finished after the `since` cursor (paging
 while `has_more`); every 10 min the full list is re-read, since a later approval or revocation of an item
 already seen does not come back through the cursor. The state is kept in memory only.
+
+## Curated feed (`HENHOUSE_FEED_DIR`)
+
+Without `HENHOUSE_FEED_DIR` the preview behaves as described above. With it, the preview shows **only**
+published posts (henhouse.db) plus the posts of the feed dir; drafts and approvals are gone everywhere
+(feed, profiles, counts): `#/p/vs-<id>` is 404, `studio-entwurf` is 404, draft media are not streamed.
+The feed dir is written by another tool and only ever read here (`app/weide/feed.py`); its content never
+reaches the static export or the public site. Publishing is unchanged (owner approval in the Lab).
+
+| Variable | Meaning |
+|---|---|
+| `HENHOUSE_FEED_DIR` | dir with `posts.jsonl` and `interactions.jsonl` (no `WEIDE_` fallback) |
+| `HENHOUSE_CHARACTERS_DIR` | character identities `<slug>/identity.md`; default `<feed dir>/../characters` |
+
+**`posts.jsonl`** – one object per line: `id`, `generation_id`, `author` (character slug), `kind`
+(`video`|`image`), `caption`, `posted_at` (ISO 8601 with offset), optional `story`, optional `hidden`.
+A later line with the same `id` replaces the earlier one. A post is shown when `posted_at <= now`,
+`hidden` is not true and the generation is readable through the review API (a listed item with media).
+
+**`interactions.jsonl`** – `type` (`comment`|`like`), `post` (feed post id), `author` (slug), `text`
+(comments), `at` (with offset). Counted when `at <= now` and the post is shown. Comments appear as normal
+comments of the post; likes count into `reactions.heart` (one per character and post) and `like_count`.
+The visitor's own reactions stay local in the browser, as before.
+
+Malformed lines, naive timestamps, unknown kinds/types and comments without text are skipped (one log
+line with file, line number and reason; never the content). Files are re-read when mtime or size change.
+"now" is the real time.
+
+### Characters (`identity.md`)
+
+Only the YAML front matter between the first two `---` lines is read (`name`, `slug`, `handle`, `kind`
+`animal|robot|thing`, `bio`, `avatar` = generation id of an image); simple `key: value` lines, quoted or
+plain. The reader stops at the closing `---`: the markdown **body (private notes) is never read**, logged
+or returned. `kind: thing` becomes account kind `other`; `bio` is cut to 150 characters.
+
+**Merge rule:** the database account is the base. The front matter overrides `display_name` (`name`),
+`handle`, `bio` and the avatar (served via `/preview/media/<generation id>/output`) for the preview only,
+never written back; kind, colour, followers, the in-world profile and the robot flag stay from the
+database (account briefs inside published cards, comments and profiles get the same overrides). A slug
+that is not in the database becomes a preview-only account built from the front matter
+(`preview_only: true`, kind from the front matter, `robot: true` for robots, so the disclaimer shows);
+a feed author without identity.md and database row gets a plain account named after the slug.
+
+### API (curated mode)
+
+- `GET /api/feed` – published cards and feed cards, newest first (`posted_at`). Feed card = the published
+  card shape plus: `id` `"fd-<post id>"`, `draft: false` (no `preview` key, so no ENTWURF pill),
+  `story` (string or null), `lab_url` (Lab run page, for a "…" menu), `like_count`, `comment_count`,
+  `generation: {public_id: null, model_label, credits, start_source_sim?}`, `feed: {post_id,
+  generation_id, model, task, width, height, fps, duration_s, has_audio, created_at}`.
+- `GET /api/posts/fd-<id>` – the card plus `comments` (`{id, text, created_at, source: "feed",
+  reply_to: null, account, replies: []}`), `moments: []`, `parent: null`.
+- `GET /api/accounts` – database accounts (with overrides) and preview-only characters; `posts` counts
+  published + shown feed posts.
+- `GET /api/accounts/<slug>` – profile with overrides; `posts` merges published and feed posts (newest
+  first), `post_count`; `preview_only: true` for characters without a database row.
+- `GET /api/meta` – `posts` includes the shown feed posts.
+- `GET /api/preview/status` – `feed: {posts, waiting (due, generation not readable), scheduled, hidden,
+  skipped_lines}` (`null` without a feed dir).
+- `GET /api/preview/stories` (also without a feed dir: published posts only) – story rings:
+  `{day, items: [{account, latest_at, post_ids, stories}]}`, one item per character with a shown post on
+  `day` (HENHOUSE_TODAY, else today in Europe/Berlin), newest first; `stories` = distinct `story` values.
+- `/api/top` stays published-only.
+
+Draft and approval cards (without a feed dir) now also carry top-level `draft` and `lab_url`.
