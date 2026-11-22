@@ -460,6 +460,15 @@ html[data-view="feed"] .feed__head, html[data-view="feed"] .site-foot { scroll-s
 .reacts--rail .react--chew[aria-pressed="true"] { color: #9bd46a; }
 .reacts--rail .react:focus-visible { outline: none; }
 .reacts--rail .react:focus-visible .react__e { outline: 2px solid var(--tag); outline-offset: 2px; }
+/* short phones (320x640, 360x640): on the first slide only the part below the top bar and the story rings
+   is on screen; a compact rail (smaller buttons, tighter gaps) keeps all six buttons above the bottom tabs */
+@media (max-width: 1023px) and (max-height: 700px) {
+  .reacts--rail { gap: 4px; bottom: calc(var(--nav-h) + 10px); margin-bottom: 10px; }
+  .reacts--rail .react { gap: 1px; font-size: 10.5px; line-height: 1.2; }
+  .reacts--rail .react__e { width: 38px; height: 38px; font-size: 17px; }
+  .reacts--rail .react__e svg { width: 18px; height: 18px; }
+  .slide .media__sound { right: 66px; }        /* the rail reaches up to it there: the pill sits left of the rail */
+}
 .post__more svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 
 .caption { margin: 10px 4px 0; font-size: 15px; text-wrap: pretty; overflow-wrap: anywhere; }

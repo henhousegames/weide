@@ -655,3 +655,59 @@ def test_posted_at_uses_the_berlin_day(env, tmp_path, monkeypatch):
     res = run(con, svc, full=True)
     assert res["updated"] == 1 and posts(con)[0]["posted_at"] == "2026-11-22T00:30:00+01:00"
     assert run(con, svc, full=True)["unchanged"] == 1
+
+
+# --- caption guard: the export leak check's rules per item ---------------------------------------------
+
+LEAKY_CAPTIONS = ["Rendered from /home/EXAMPLE/takes/out.mp4", "Code sk-EXAMPLE0123456789abcdef in a caption",
+                  "generation:EXAMPLE-run-1"]
+
+
+@pytest.mark.parametrize("caption", LEAKY_CAPTIONS)
+def test_leaky_caption_fails_alone_and_is_retried(env, tmp_path, caplog, caption):
+    con, svc, *_, dbp = env
+    caplog.set_level(logging.DEBUG)
+    svc.pubs = [publication(PID, caption=caption), publication("pub_EXAMPLE02", caption="Harmlos: AC/DC 24/7")]
+    lines: list[str] = []
+    res = run(con, svc, log=lines.append)
+    assert res["new"] == 1 and res["failed_ids"] == [PID]
+    assert [p["public_id"] for p in posts(con)] == ["pub_EXAMPLE02"]
+    assert db.get_meta(con, "publications_since") is None                         # retried next run
+    text = json.dumps(res) + "\n".join(lines) + caplog.text
+    assert caption not in text and caption[:12] not in text and "EXAMPLE0123" not in text
+    assert "/home/" not in text and "generation:EXAMPLE" not in text
+    # fixed in the service (a caption update: newer approved_at): published on the next run
+    svc.pubs[0] = publication(PID, caption="Rasenmäher-Test", approved_at="2026-11-17T19:00:00+00:00")
+    res = run(con, svc)
+    assert res["failed"] == [] and res["new"] == 1
+    assert {p["public_id"] for p in posts(con)} == {PID, "pub_EXAMPLE02"}
+    assert db.get_meta(con, "publications_since")
+    con.commit()
+    assert export_static(tmp_path / "site", dbp)["leaks"] == []
+
+
+def test_leaky_update_keeps_the_stored_version(env, tmp_path):
+    con, svc, *_, dbp = env
+    assert run(con, svc)["new"] == 1
+    [before] = posts(con)
+    stamp = db.get_meta(con, "last_full_pull_at")
+    svc.pubs = [publication(PID, caption=LEAKY_CAPTIONS[0], approved_at="2026-11-17T19:00:00+00:00")]
+    res = run(con, svc, full=True)
+    assert res["failed_ids"] == [PID] and res["updated"] == 0
+    assert LEAKY_CAPTIONS[0] not in json.dumps(res)
+    [after] = posts(con)
+    assert dict(after) == dict(before)                                            # old version kept, still published
+    assert after["status"] == "published" and after["caption"] == "Rasenmäher-Test"
+    assert db.get_meta(con, "last_full_pull_at") == stamp                         # the full pull is retried
+    con.commit()
+    assert export_static(tmp_path / "site", dbp)["leaks"] == []
+
+
+def test_item_leaks_uses_the_export_rules(env):
+    from weide.export_static import item_leaks
+    con = env[0]
+    ok = {"caption": "Rasenmäher-Test", "prompt": {"original": "A sheep / a lawn"}, "parameters": {"key": "x"}}
+    assert item_leaks(con, PID, "Hockey /tmp-ish Token-Ring AC/DC", ok) == []
+    assert item_leaks(con, PID, "see /home/EXAMPLE/x", ok)
+    assert item_leaks(con, PID, "ok", {**ok, "notes": ["/srv/EXAMPLE/out.mp4"]}) == []  # sanitized away, as at export
+    assert item_leaks(con, PID, "ok", {**ok, "credits": [{"text": "takes/EXAMPLE.wav"}]})

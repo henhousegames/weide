@@ -27,7 +27,7 @@ from typing import Any
 
 from . import config
 from .db import parse_time
-from .generation import _TOKEN, PUBLIC_ID, credits_leaks, summary_leaks
+from .generation import _TOKEN, PUBLIC_ID, credits_leaks, public_summary, summary_leaks
 from .media import MediaError, avatar_file, media_file, thumb_file
 
 URL = re.compile(r"^/(media|thumb/(\d+)|avatar)/(.+)$")
@@ -188,6 +188,18 @@ def leak_check(out: Path, secrets: tuple[str, ...] = ()) -> list[str]:
             for pat in ("/home/", "/Users/", "generation:"):
                 if pat in text:
                     hits.append(f"{f.relative_to(out)}: contains {pat!r}")
+    return hits
+
+
+def item_leaks(con: sqlite3.Connection, public_id: str, caption: str | None, record: dict) -> list[str]:
+    """The export leak check's own rules for one generation post before it is stored (pull-approved): its
+    public post fields (caption and card summary, as in data/feed.json and data/posts/; `_scan`) and its
+    data/gen/<public_id>.json (`summary_leaks`). Hits may quote the text: log only their count."""
+    from .server import public_generation
+    row = {"id": 0, "public_id": public_id, "generation_json": json.dumps(record)}
+    hits: list[str] = []
+    _scan({"caption": caption, "generation": public_generation(row)}, public_id, hits)
+    summary_leaks(public_summary(con, row), public_id, hits, post=public_id)
     return hits
 
 

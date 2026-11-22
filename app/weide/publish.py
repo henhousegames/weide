@@ -60,6 +60,9 @@ Credits: the summary's `credits` list (else the list item's) is kept in generati
 missing). An item whose sanitized credits still name internal details (generation.credit_internal: run
 ids, take labels, file names, paths) is refused as a failed item (retried next run; the message names
 the count, never the text), so it never reaches the export, whose leak check stays as a second net. A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
+Caption guard: the same way, an item whose caption or public summary holds a value the export leak check
+would reject (export_static.item_leaks: the check's own rules, so they cannot drift - real absolute paths,
+secret-like values, run ids) fails alone and is retried; an already-stored post keeps its old version.
 Audio-only publications (`audio_url` without video/image, or an audio/* mime) are not posts: skipped
 with a log line, no failure.
 
@@ -84,6 +87,7 @@ import httpx
 
 from . import config
 from .db import get_meta, jdump, jload, now_iso, parse_time, set_meta, upsert_post
+from .export_static import item_leaks
 from .generation import (CREDITS_KEY, PRIVATE_INPUT, PUBLIC_ID, REDACTED, START_SOURCE_KEY, credit_internal,
                          model_short_label, sanitize, sanitize_credits, start_source_sim)
 
@@ -483,6 +487,11 @@ def _publish_item(con: sqlite3.Connection, client: ServiceClient, pub: Publicati
     if leaky:                                  # never name the text: it is what must not get out
         raise PublishError(f"{pub.public_id}: {leaky} credit(s) with internal details (run id, take label, file "
                            "name or path); not published - fix the credits in the video-service")
+    leaks = item_leaks(con, pub.public_id, pub.caption, record)
+    if leaks:                                  # the export leak check's rules; again never the text
+        raise PublishError(f"{pub.public_id}: caption or summary has {len(leaks)} value(s) the export leak check "
+                           "rejects (path, secret-like value or run id); not published, a stored older version "
+                           "is kept - fix it in the video-service")
     row = con.execute("SELECT * FROM posts WHERE source=?", (source,)).fetchone()
     media_rel = f"gen/{pub.public_id}{pub.ext}"
     # first approval = post time, kept on updates; stored in Europe/Berlin local time (same instant), so the
