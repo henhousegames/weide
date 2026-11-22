@@ -94,7 +94,7 @@ def deploy(site: Path, db_path: str | Path | None = None, *, pull: bool = True, 
             res["failed_items"] = list(res["pull"].get("failed_ids") or [])
             log(f"pull: {len(res['pull']['failed'])} item(s) failed, exporting the rest; failed public_ids: "
                 + (", ".join(res["failed_items"]) or "-"))
-    exp = export_static(site, db_path, today=today)
+    exp = export_static(site, db_path, today=today, secrets=(settings.key,) if settings is not None else ())
     res["export"] = {k: exp[k] for k in ("posts", "accounts", "generations", "files", "bytes", "today")}
     res["export"]["missing"] = len(exp["missing"])
     if exp["leaks"]:

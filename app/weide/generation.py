@@ -118,13 +118,19 @@ def sanitize_credits(raw: Any) -> list[dict]:
 # Internal details a credit text/model must never carry to the public site (the service sometimes
 # names its own takes and asset archives, e.g. "own generation: ... audio of gen_<hex> (h004 b4 t1)" or
 # "pack (pack.zip) :: Audio/file.ogg"). Ingest keeps them (the preview is private); the export refuses.
+_PATH_DIRS = (r"home|tmp|users|var|mnt|srv|opt|root|etc|data|private|workspace|outputs?|inputs?|assets|audio|sfx|"
+              r"sounds?|samples|models?|ckpts?|checkpoints|loras?|runs?|takes?|renders?|comfyui|archives?")
 _CREDIT_INTERNAL = re.compile(
     r"gen_[0-9a-f]{6,}"                                               # internal run id
     r"| :: "                                                          # archive member separator
-    r"|\.(?:zip|7z|tar|gz|ogg|flac|wav|mp3|mp4|png|safetensors)\b"   # file names
-    r"|[^\s/]/|/[^\s/]"                                              # path segments (license.url is separate)
-    r"|\bh\d{3}\b",                                                   # internal take label
+    r"|\.(?:zip|7z|tar|gz|tgz|rar|ogg|flac|wav|mp3|m4a|aac|mp4|mov|webm|png|jpe?g|webp|json|ya?ml|safetensors|"
+    r"ckpt|pt|pth|bin|gguf)\b"                                       # file names
+    r"|(?<![\w.:/-])(?:~|[a-z]:)?/[\w.-]+/"                         # absolute path: /dir/... or ~/dir/...
+    r"|(?<![\w./-])(?:" + _PATH_DIRS + r")[\\/][\w.-]"              # relative path in a known dir (Audio/x)
+    r"|[a-z]:\\|\\\\|\w\\\w"                                     # Windows paths
+    r"|\bh\d{3}\s+b\d+\s+t\d+\b",                                     # internal take label (h004 b4 t1)
     re.I)
+# Not internal: "AC/DC", "24/7", "freesound.org/s/4711" (a slash alone is no path), a bare "h123".
 
 
 def credit_internal(c: Any) -> bool:

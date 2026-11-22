@@ -91,17 +91,27 @@ INTERNAL_TEXTS = [
     "(own generation (same terms as the source take))",
     "Musik: example-pack (example_sfx-pack.zip) :: Audio/doorCreak.ogg - Example Studio (example.org) (CC0-1.0)",
     "Sound: run gen_deadbeef01",
-    "Sound: take h123",
+    "Sound: take h123 b2 t1",
+    "Sound: (H004 B4 T1)",
     "Sound: pack :: clip",
     "Sound: thunder.WAV (CC0)",
     "Sound: weights model.safetensors",
     "Sound: Audio/clip",
     "Sound: from sfx/archive",
+    "Sound: outputs/EXAMPLE",
+    "Sound: clip.flac",
 ]
+# paths the sanitizer already reduces to a base name; credit_internal still flags the raw text
+RAW_INTERNAL_TEXTS = ["Sound: /tmp/EXAMPLE/clip", "Sound: ~/EXAMPLE/clip", "Sound: C:\\EXAMPLE\\clip"]
 PUBLIC_TEXTS = [NOTICE, CC0_TEXT,
                 "SoundCTM by Example Lab, CC BY 4.0",
                 "Musik: Example Artist - Example Song (CC BY 4.0), 0.00-1.15 s",
-                "Ton: eigene Generation (Stable Audio 3 Small SFX)"]
+                "Ton: eigene Generation (Stable Audio 3 Small SFX)",
+                "Musik: AC/DC - Example Song",                       # a slash alone is no path
+                "Sound: freesound.org/s/4711 by example (CC0)",
+                "Sound: freesound.org/people/example/sounds/4711 (CC0)",
+                "Musik: 24/7 Example Radio",
+                "Sound: Example h123 Remix"]                         # no take label shape
 
 
 def test_internal_credit_details_fail_the_leak_check():
@@ -113,6 +123,8 @@ def test_internal_credit_details_fail_the_leak_check():
         assert len(hits) == 1 and "pub_X" in hits[0] and t not in hits[0], t
         assert "gen_" not in hits[0] and "::" not in hits[0]
     assert credit_internal({"text": "Powered by Example", "model": "ckpt/model-v2"})          # model counts too
+    for t in RAW_INTERNAL_TEXTS:
+        assert credit_internal({"text": t}), t
     for t in PUBLIC_TEXTS:
         c = {"kind": "license_notice", "text": t,
              "license": {"id": "CC-BY-4.0", "url": "https://creativecommons.org/licenses/by/4.0/"}}
