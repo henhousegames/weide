@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from weide import config, db, preview, preview_auth
 from weide.export_static import export_static, leak_check
-from weide.generation import credits_leaks, sanitize_credits
+from weide.generation import credit_internal, credits_leaks, sanitize_credits
 from weide.publish import ServiceSettings, audio_only, pull_approved
 from weide.review import ReviewItem, ReviewSettings
 
@@ -83,6 +83,43 @@ def test_sanitize_credits_keeps_only_public_fields():
     credits_leaks([{**WANT[0], "path": "/home/EXAMPLE"}], "t", hits)
     credits_leaks([{"text": "x", "license": {"url": "http://10.0.0.1/x"}}], "t", hits)
     assert len(hits) == 2
+
+
+# synthetic examples of what the service may send for audio sources (invented ids, not real ones)
+INTERNAL_TEXTS = [
+    "Musik: own generation: LTX-2.5 audio of gen_0a1b2c3d4e5f60718293 (h007 b2 t3), 0.00-2.40 s, cut locally "
+    "(own generation (same terms as the source take))",
+    "Musik: example-pack (example_sfx-pack.zip) :: Audio/doorCreak.ogg - Example Studio (example.org) (CC0-1.0)",
+    "Sound: run gen_deadbeef01",
+    "Sound: take h123",
+    "Sound: pack :: clip",
+    "Sound: thunder.WAV (CC0)",
+    "Sound: weights model.safetensors",
+    "Sound: Audio/clip",
+    "Sound: from sfx/archive",
+]
+PUBLIC_TEXTS = [NOTICE, CC0_TEXT,
+                "SoundCTM by Example Lab, CC BY 4.0",
+                "Musik: Example Artist - Example Song (CC BY 4.0), 0.00-1.15 s",
+                "Ton: eigene Generation (Stable Audio 3 Small SFX)"]
+
+
+def test_internal_credit_details_fail_the_leak_check():
+    for t in INTERNAL_TEXTS:
+        c = {"kind": "audio_source", "text": t}
+        assert credit_internal(c), t
+        hits: list[str] = []
+        credits_leaks(sanitize_credits([WANT[0], c]), "data/gen/pub_X.json", hits, "pub_X")
+        assert len(hits) == 1 and "pub_X" in hits[0] and t not in hits[0], t
+        assert "gen_" not in hits[0] and "::" not in hits[0]
+    assert credit_internal({"text": "Powered by Example", "model": "ckpt/model-v2"})          # model counts too
+    for t in PUBLIC_TEXTS:
+        c = {"kind": "license_notice", "text": t,
+             "license": {"id": "CC-BY-4.0", "url": "https://creativecommons.org/licenses/by/4.0/"}}
+        assert not credit_internal(c), t                                                     # license.url may have /
+        hits = []
+        credits_leaks([c], "t", hits, "pub_X")
+        assert hits == [], t
 
 
 def test_fixture_items_carry_credits():
@@ -211,6 +248,29 @@ def test_card_summary_and_export_carry_credits(published, tmp_path):
     gen["credits"].append({"text": "x", "license": {"url": "http://10.1.2.3/l"}})
     (out / f"data/gen/{WITH}.json").write_text(json.dumps(gen))
     assert any("credits" in h for h in leak_check(out))
+
+
+def test_export_refuses_internal_credits_but_ingest_keeps_them(tmp_path, monkeypatch):
+    """Ingest does not filter (the private preview shows the raw text); the export leak check aborts and
+    names the post's public_id, not the credit text."""
+    internal = {"kind": "audio_source", "text": INTERNAL_TEXTS[1],
+                "license": {"id": "CC0-1.0", "url": "https://creativecommons.org/publicdomain/zero/1.0/"}}
+    dbp = tmp_path / "h.db"
+    con = db.connect(dbp)
+    db.upsert_account(con, "maehbot", kind="robot", handle="@maehbot", display_name="Mähbot")
+    con.commit()
+    monkeypatch.setattr(config, "MEDIA_ROOT", tmp_path / "media")
+    monkeypatch.setattr(config, "THUMB_ROOT", tmp_path / "thumb")
+    svc = Service()
+    svc.summaries[WITH]["credits"] = [WANT[0], internal]
+    pull_approved(con, ServiceSettings(BASE, KEY), transport=httpx.MockTransport(svc), log=lambda _: None)
+    assert gen_json(con, WITH)["credits"] == [WANT[0], internal]                     # stored raw (private)
+    con.close()
+    stats = export_static(tmp_path / "site", dbp)
+    hits = stats["leaks"]
+    assert hits and all(WITH in h for h in hits)
+    assert {h.split(":")[0] for h in hits} >= {"data/feed.json", f"data/gen/{WITH}.json"}
+    assert not any("example_sfx" in h or "::" in h or "doorCreak" in h for h in hits)
 
 
 # --- frontend render (Node + a tiny DOM shim; the real static/js modules) ------------------------------

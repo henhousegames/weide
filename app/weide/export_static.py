@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .generation import PUBLIC_ID, summary_leaks
+from .generation import PUBLIC_ID, credits_leaks, summary_leaks
 from .media import MediaError, avatar_file, media_file, thumb_file
 
 URL = re.compile(r"^/(media|thumb/(\d+)|avatar)/(.+)$")
@@ -139,6 +139,9 @@ def _scan(obj: Any, where: str, hits: list[str], parent: str | None = None) -> N
                 hits.append(f"{where}: private key {k!r}")
             if parent == "moments" and k in MOMENT_DROP_KEYS:
                 hits.append(f"{where}: moment {k!r}")
+            if k == "credits":                 # card summaries: the same rule as data/gen/<id>.json
+                pid = obj.get("public_id")
+                credits_leaks(v, where, hits, pid if isinstance(pid, str) else None)
             _scan(v, where, hits, k)
     elif isinstance(obj, list):
         for x in obj:
@@ -161,7 +164,7 @@ def leak_check(out: Path) -> list[str]:
         rel = f.relative_to(out)
         data = json.loads(f.read_text(encoding="utf-8"))
         if rel.parts[:2] == ("data", "gen"):
-            summary_leaks(data, str(rel), hits)          # prompts/settings are public here, paths etc. not
+            summary_leaks(data, str(rel), hits, post=f.stem)        # prompts/settings are public here, paths etc. not
         else:
             _scan(data, str(rel), hits)
     for f in [out / "index.html", *sorted((out / "static").rglob("*"))]:
