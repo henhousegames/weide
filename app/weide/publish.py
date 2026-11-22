@@ -59,10 +59,10 @@ Credits: the summary's `credits` list (else the list item's) is kept in generati
 (generation.sanitize_credits: kind/text/model/license{id,url}, strings only, http(s) URL only; [] when
 missing). An item whose sanitized credits still name internal details (generation.credit_internal: run
 ids, take labels, file names, paths) is refused as a failed item (retried next run; the message names
-the count, never the text), so it never reaches the export, whose leak check stays as a second net.
+the count, never the text), so it never reaches the export, whose leak check stays as a second net. A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
 Caption guard: the same way, an item whose caption or public summary holds a value the export leak check
 would reject (export_static.item_leaks: the check's own rules, so they cannot drift - real absolute paths,
-secret-like values, run ids) fails alone and is retried; an already-stored post keeps its old version. A re-pull (`--full`) of an already-imported post updates generation_json when they changed.
+secret-like values, run ids) fails alone and is retried; an already-stored post keeps its old version.
 Audio-only publications (`audio_url` without video/image, or an audio/* mime) are not posts: skipped
 with a log line, no failure.
 
