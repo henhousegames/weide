@@ -89,9 +89,11 @@ def deploy(tmp_path):
 
 def test_generated_media_is_ignored_but_site_media_is_committable():
     paths = ["media/gen/a.mp4", "thumb/540/gen/a.jpg", "site/media/gen/a.mp4", "site/thumb/540/gen/a.jpg",
-             "media/x.mp4", "thumb/540/x.jpg"]
+             "media/x.mp4", "thumb/540/x.jpg",
+             "site/media/e004/out/single/a.mp4", "site/thumb/540/e004/out/single/a.jpg",   # legacy media dirs
+             "out/x", "build/x"]
     r = subprocess.run(["git", "check-ignore", "--no-index", *paths], cwd=REPO, capture_output=True, text=True)
-    assert r.stdout.split() == ["media/gen/a.mp4", "thumb/540/gen/a.jpg"]
+    assert r.stdout.split() == ["media/gen/a.mp4", "thumb/540/gen/a.jpg", "out/x", "build/x"]
 
 
 def test_publish_then_clean_second_run(deploy):
