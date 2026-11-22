@@ -182,12 +182,59 @@ def _m005_accounts_listed(con: sqlite3.Connection) -> None:
                 "OR NOT EXISTS (SELECT 1 FROM characters c WHERE c.account_id = accounts.id)")
 
 
+# Uwe's butcher shop used a real town and a common real business name; it is now clearly fictional.
+# Order matters: the handle and the full names first, then the town (plain and JSON-escaped spelling).
+UWE_RENAMES: tuple[tuple[str, str], ...] = (
+    ("@metzgerei_schneider_official", "@metzgerei_wammerich_official"),
+    ("metzgerei_schneider_official", "metzgerei_wammerich_official"),
+    ("Metzgerei Schneider", "Metzgerei Wammerich"),
+    ("Uwe Schneider", "Uwe Wammerich"),
+    ("Zweibrücken", "Schwartenbrück"),
+    ("Zweibr\\u00fccken", "Schwartenbr\\u00fcck"),
+)
+# free-text columns that may mention the shop (slugs, ids and timestamps are never touched)
+_UWE_TEXT_COLUMNS = {
+    "accounts": ("handle", "display_name", "bio", "followers_note", "profile_json"),
+    "posts": ("title", "caption", "hashtags", "why", "meta_json", "generation_json"),
+    "comments": ("text",),
+    "characters": ("identity", "style_guidance", "voice"),
+}
+
+
+def rename_uwe_shop(text: str | None) -> str | None:
+    """Apply UWE_RENAMES; idempotent (the new names contain none of the old ones)."""
+    if not text:
+        return text
+    for old, new in UWE_RENAMES:
+        text = text.replace(old, new)
+    return text
+
+
+def _m006_uwe_fictional_shop(con: sqlite3.Connection) -> None:
+    """Data migration: 'Metzgerei Schneider, Zweibrücken' (real town, real-sounding shop) becomes the
+    fictional 'Metzgerei Wammerich, Schwartenbrück' in every free-text field. Slugs and ids stay, so
+    links (#/u/uwe, #/p/<id>) keep working. Rerunning it changes nothing."""
+    tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for table, wanted in _UWE_TEXT_COLUMNS.items():
+        if table not in tables:
+            continue
+        present = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        for col in (c for c in wanted if c in present):
+            rows = con.execute(f"SELECT rowid, {col} FROM {table} WHERE {col} LIKE '%schneider%' "
+                               f"OR {col} LIKE '%Zweibr%'").fetchall()
+            for rowid, value in rows:
+                new = rename_uwe_shop(value)
+                if new != value:
+                    con.execute(f"UPDATE {table} SET {col}=? WHERE rowid=?", (new, rowid))
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "legacy schema", _m001_legacy),
     (2, "accounts: kind validated in code, world column", _m002_accounts_kind_world),
     (3, "posts: status, public_id, generation_json", _m003_post_status),
     (4, "characters, controllers, character_controllers", _m004_characters_controllers),
     (5, "accounts: listed (public snapshot membership)", _m005_accounts_listed),
+    (6, "data: uwe's shop gets a fictional name and town", _m006_uwe_fictional_shop),
 ]
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 

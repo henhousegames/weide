@@ -54,7 +54,7 @@ def test_migration_from_legacy_schema(db_path):
     legacy_db(db_path)
     con = sqlite3.connect(db_path, isolation_level=None)
     assert db.schema_version(con) == 1
-    assert db.migrate(con) == [2, 3, 4, 5]
+    assert db.migrate(con) == [2, 3, 4, 5, 6]
     con.close()
     con = db.connect(db_path)
     assert db.schema_version(con) == db.SCHEMA_VERSION
@@ -115,7 +115,7 @@ def test_newer_schema_is_refused(db_path):
 def test_cli_migrate(db_path, capsys):
     legacy_db(db_path)
     main(["migrate", "--db", str(db_path)])
-    assert '"applied": [2, 3, 4, 5]' in capsys.readouterr().out
+    assert '"applied": [2, 3, 4, 5, 6]' in capsys.readouterr().out
 
 
 def test_m005_lists_accounts_with_posts_or_without_character(db_path):
@@ -134,6 +134,6 @@ def test_m005_lists_accounts_with_posts_or_without_character(db_path):
     con.execute("INSERT INTO posts (account_id, kind, posted_at, ts, status) VALUES "
                 "(3, 'reel', '2026-11-17T10:00:00+01:00', 1, 'published'), "
                 "(2, 'reel', '2026-11-17T10:00:00+01:00', 1, 'draft')")
-    assert db.migrate(con) == [5]
+    assert db.migrate(con) == [5, 6]
     assert dict(con.execute("SELECT slug, listed FROM accounts").fetchall()) == {"hannes": 1, "maehbot": 0, "gustav": 1}
     con.close()
